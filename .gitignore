@@ -1,0 +1,18 @@
+# Credentials
+service_account.json
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.env
+
+# ChromaDB local data
+chroma_db/
+
+# Logs
+error_log.txt
+
+# IDE
+.vscode/
+*.code-workspace

@@ -1,0 +1,1533 @@
+<!DOCTYPE html>
+<html lang="tr">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RAG — Belge Zekası</title>
+  <link rel="icon" href="/static/favicon.ico" type="image/png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap"
+    rel="stylesheet">
+  <style>
+    :root {
+      --bg: #f8f9fa;
+      --surface: #ffffff;
+      --surface2: #f1f3f5;
+      --border: #e9ecef;
+      --accent: #1c7ed6;
+      --blue: #339af0;
+      --orange: #f76707;
+      --purple: #be4bdb;
+      --text: #212529;
+      --muted: #868e96;
+      --danger: #fa5252;
+      --success: #40c057;
+      --mono: 'Space Mono', monospace;
+      --sans: 'Syne', sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      grid-template-rows: 54px 1fr
+    }
+
+    /* ── HEADER ── */
+    header {
+      grid-column: 1/-1;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 0 22px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      position: sticky;
+      top: 0;
+      z-index: 20
+    }
+
+    .logo {
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--accent);
+      letter-spacing: 5px
+    }
+
+    .logo em {
+      color: var(--muted);
+      font-style: normal
+    }
+
+    .hbadge {
+      font-family: var(--mono);
+      font-size: 8px;
+      letter-spacing: 2px;
+      padding: 2px 7px;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      color: var(--muted)
+    }
+
+    .hright {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 10px
+    }
+
+    .chunk-count {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--muted)
+    }
+
+    .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--success);
+      box-shadow: 0 0 7px var(--success);
+      animation: pulse 2s infinite
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1
+      }
+
+      50% {
+        opacity: .3
+      }
+    }
+
+    /* ── SIDEBAR ── */
+    aside {
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column
+    }
+
+    .sec {
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--border)
+    }
+
+    .sec-label {
+      font-family: var(--mono);
+      font-size: 8px;
+      letter-spacing: 3px;
+      color: var(--muted);
+      text-transform: uppercase;
+      margin-bottom: 11px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between
+    }
+
+    /* ── INPUTS ── */
+    input[type=text],
+    input[type=url],
+    input[type=password] {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 7px 10px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 11px;
+      outline: none;
+      transition: border-color .2s
+    }
+
+    input:focus {
+      border-color: var(--accent)
+    }
+
+    input.saved {
+      border-color: var(--success)
+    }
+
+    textarea {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 9px 10px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 10px;
+      line-height: 1.6;
+      resize: vertical;
+      min-height: 90px;
+      outline: none;
+      transition: border-color .2s
+    }
+
+    textarea:focus {
+      border-color: var(--blue)
+    }
+
+    .row {
+      display: flex;
+      gap: 7px;
+      align-items: center
+    }
+
+    .row input {
+      flex: 1
+    }
+
+    /* ── TABS ── */
+    .tabs {
+      display: flex;
+      gap: 2px;
+      margin-bottom: 12px
+    }
+
+    .tab {
+      flex: 1;
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      padding: 6px 4px;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      transition: all .15s;
+      text-align: center
+    }
+
+    .tab.active {
+      background: var(--accent);
+      color: #000;
+      border-color: var(--accent);
+      font-weight: 700
+    }
+
+    .tab-pane {
+      display: none
+    }
+
+    .tab-pane.active {
+      display: block
+    }
+
+    /* ── DROP ZONE ── */
+    .drop-zone {
+      border: 1.5px dashed var(--border);
+      border-radius: 5px;
+      padding: 14px;
+      text-align: center;
+      cursor: pointer;
+      transition: all .2s;
+      position: relative;
+      overflow: hidden
+    }
+
+    .drop-zone:hover,
+    .drop-zone.over {
+      border-color: var(--accent);
+      background: rgba(232, 255, 71, .03)
+    }
+
+    .drop-zone input {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer
+    }
+
+    .di {
+      font-size: 22px;
+      margin-bottom: 5px
+    }
+
+    .dt {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--muted);
+      line-height: 1.6
+    }
+
+    .dt b {
+      color: var(--accent)
+    }
+
+    .size-note {
+      font-family: var(--mono);
+      font-size: 9px;
+      color: var(--muted);
+      text-align: center;
+      margin-top: 5px
+    }
+
+    /* ── LAYER CRAWL PANEL ── */
+    .crawl-hint {
+      font-family: var(--mono);
+      font-size: 9px;
+      color: var(--muted);
+      line-height: 1.7;
+      margin-bottom: 9px
+    }
+
+    .crawl-hint b {
+      color: var(--orange)
+    }
+
+    .layer-track {
+      display: none;
+      margin-top: 10px;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      overflow: hidden
+    }
+
+    .layer-header {
+      background: var(--surface2);
+      padding: 8px 12px;
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 2px;
+      color: var(--orange);
+      text-transform: uppercase;
+      display: flex;
+      align-items: center;
+      justify-content: space-between
+    }
+
+    .layer-body {
+      padding: 10px 12px
+    }
+
+    .layer-bars {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-bottom: 10px
+    }
+
+    .layer-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px
+    }
+
+    .layer-bar-num {
+      font-family: var(--mono);
+      font-size: 9px;
+      color: var(--muted);
+      width: 14px;
+      flex-shrink: 0
+    }
+
+    .layer-bar-fill {
+      height: 6px;
+      border-radius: 3px;
+      min-width: 4px;
+      transition: width .4s
+    }
+
+    .layer-bar-count {
+      font-family: var(--mono);
+      font-size: 9px;
+      color: var(--muted)
+    }
+
+    .layer-bar-fill.l1 {
+      background: var(--accent)
+    }
+
+    .layer-bar-fill.l2 {
+      background: var(--blue)
+    }
+
+    .layer-bar-fill.l3 {
+      background: var(--orange)
+    }
+
+    .layer-bar-fill.l4 {
+      background: var(--purple)
+    }
+
+    .layer-bar-fill.lx {
+      background: var(--muted)
+    }
+
+    .crawl-status-line {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--muted);
+      margin-bottom: 8px;
+      line-height: 1.6
+    }
+
+    .crawl-status-line b {
+      color: var(--text)
+    }
+
+    .score-badge {
+      display: inline-block;
+      font-family: var(--mono);
+      font-size: 9px;
+      padding: 2px 7px;
+      border-radius: 20px;
+      margin-left: 6px
+    }
+
+    .score-good {
+      background: rgba(71, 255, 143, .15);
+      color: var(--success);
+      border: 1px solid rgba(71, 255, 143, .3)
+    }
+
+    .score-mid {
+      background: rgba(255, 140, 71, .15);
+      color: var(--orange);
+      border: 1px solid rgba(255, 140, 71, .3)
+    }
+
+    .score-low {
+      background: rgba(255, 71, 71, .15);
+      color: var(--danger);
+      border: 1px solid rgba(255, 71, 71, .3)
+    }
+
+    .crawl-decision {
+      background: var(--surface2);
+      border: 1px solid var(--orange);
+      border-radius: 4px;
+      padding: 10px;
+      margin-top: 8px;
+      display: none
+    }
+
+    .crawl-decision p {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--orange);
+      margin-bottom: 8px;
+      line-height: 1.5
+    }
+
+    .crawl-decision .dbtns {
+      display: flex;
+      gap: 6px
+    }
+
+    .pbar {
+      height: 2px;
+      background: var(--border);
+      border-radius: 1px;
+      margin-top: 8px;
+      overflow: hidden
+    }
+
+    .pbar-fill {
+      height: 100%;
+      background: var(--orange);
+      border-radius: 1px;
+      width: 30%;
+      animation: slide 1.2s ease-in-out infinite alternate
+    }
+
+    @keyframes slide {
+      0% {
+        transform: translateX(0)
+      }
+
+      100% {
+        transform: translateX(240%)
+      }
+    }
+
+    .pbar-fill.done {
+      animation: none;
+      width: 100%;
+      background: var(--success)
+    }
+
+    /* ── DOCS LIST ── */
+    .docs-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px
+    }
+
+    .doc-item {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 6px 10px;
+      display: flex;
+      align-items: center;
+      gap: 7px
+    }
+
+    .doc-icon {
+      font-size: 12px;
+      flex-shrink: 0
+    }
+
+    .doc-name {
+      font-family: var(--mono);
+      font-size: 10px;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap
+    }
+
+    .doc-chunks {
+      font-family: var(--mono);
+      font-size: 9px;
+      color: var(--muted);
+      flex-shrink: 0
+    }
+
+    .empty-docs {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--muted);
+      text-align: center;
+      padding: 14px 0
+    }
+
+    /* ── BUTTONS ── */
+    .btn {
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      padding: 7px 12px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all .15s;
+      font-weight: 700;
+      white-space: nowrap
+    }
+
+    .btn-y {
+      background: var(--accent);
+      color: #000
+    }
+
+    .btn-y:hover {
+      background: #fff
+    }
+
+    .btn-b {
+      background: var(--blue);
+      color: #000
+    }
+
+    .btn-b:hover {
+      background: #fff
+    }
+
+    .btn-o {
+      background: var(--orange);
+      color: #000
+    }
+
+    .btn-o:hover {
+      background: #fff
+    }
+
+    .btn-outline {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted)
+    }
+
+    .btn-outline:hover {
+      border-color: var(--text);
+      color: var(--text)
+    }
+
+    .btn-danger {
+      background: transparent;
+      border: 1px solid var(--danger);
+      color: var(--danger)
+    }
+
+    .btn-danger:hover {
+      background: var(--danger);
+      color: #000
+    }
+
+    .btn-success {
+      background: var(--success);
+      color: #000
+    }
+
+    .btn:disabled {
+      opacity: .35;
+      cursor: not-allowed
+    }
+
+    .btn-full {
+      width: 100%;
+      margin-top: 7px;
+      display: block;
+      text-align: center
+    }
+
+    /* ── TOPK ── */
+    .topk-row {
+      display: flex;
+      align-items: center;
+      gap: 10px
+    }
+
+    .topk-row label {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--muted);
+      flex: 1
+    }
+
+    .topk-row input[type=range] {
+      width: 80px;
+      accent-color: var(--accent)
+    }
+
+    .topk-val {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--accent);
+      width: 16px
+    }
+
+    /* ── CHAT ── */
+    main {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden
+    }
+
+    .chat-area {
+      flex: 1;
+      overflow-y: auto;
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px
+    }
+
+    .welcome {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      flex: 1;
+      gap: 10px;
+      opacity: .35;
+      text-align: center
+    }
+
+    .welcome-icon {
+      font-size: 44px
+    }
+
+    .welcome h2 {
+      font-size: 17px;
+      font-weight: 800
+    }
+
+    .welcome p {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--muted);
+      line-height: 1.9
+    }
+
+    .msg {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      animation: fi .25s ease
+    }
+
+    @keyframes fi {
+      from {
+        opacity: 0;
+        transform: translateY(6px)
+      }
+    }
+
+    .msg-user .bubble {
+      align-self: flex-end;
+      background: var(--accent);
+      color: #000;
+      padding: 11px 15px;
+      border-radius: 8px 8px 2px 8px;
+      max-width: 68%;
+      font-size: 13px;
+      font-weight: 600
+    }
+
+    .msg-ai .bubble {
+      align-self: flex-start;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 14px;
+      border-radius: 2px 8px 8px 8px;
+      max-width: 80%;
+      font-size: 13px;
+      line-height: 1.7;
+      white-space: pre-wrap
+    }
+
+    .sources {
+      align-self: flex-start;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      max-width: 80%
+    }
+
+    .stag {
+      font-family: var(--mono);
+      font-size: 9px;
+      padding: 2px 7px;
+      background: rgba(71, 184, 255, .1);
+      border: 1px solid rgba(71, 184, 255, .25);
+      border-radius: 20px;
+      color: var(--blue)
+    }
+
+    .typing {
+      align-self: flex-start;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 14px;
+      border-radius: 2px 8px 8px 8px;
+      display: flex;
+      gap: 5px;
+      align-items: center
+    }
+
+    .typing span {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--muted);
+      animation: bo .8s infinite
+    }
+
+    .typing span:nth-child(2) {
+      animation-delay: .15s
+    }
+
+    .typing span:nth-child(3) {
+      animation-delay: .3s
+    }
+
+    @keyframes bo {
+
+      0%,
+      100% {
+        transform: translateY(0)
+      }
+
+      50% {
+        transform: translateY(-4px)
+      }
+    }
+
+    /* ── QUERY BAR ── */
+    .qbar {
+      padding: 14px 22px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 9px;
+      align-items: flex-end;
+      background: var(--surface)
+    }
+
+    .qinput {
+      flex: 1;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 11px 14px;
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 14px;
+      outline: none;
+      resize: none;
+      min-height: 44px;
+      max-height: 130px;
+      transition: border-color .2s;
+      line-height: 1.5
+    }
+
+    .qinput:focus {
+      border-color: var(--accent)
+    }
+
+    .sbtn {
+      width: 44px;
+      height: 44px;
+      background: var(--accent);
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 17px;
+      transition: all .15s;
+      display: flex;
+      align-items: center;
+      justify-content: center
+    }
+
+    .sbtn:hover {
+      background: #fff
+    }
+
+    .sbtn:disabled {
+      opacity: .35;
+      cursor: not-allowed
+    }
+
+    /* ── TOAST ── */
+    #toast {
+      position: fixed;
+      bottom: 22px;
+      right: 22px;
+      padding: 10px 16px;
+      border-radius: 5px;
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 1px;
+      z-index: 999;
+      transform: translateY(70px);
+      transition: transform .3s;
+      pointer-events: none;
+      max-width: 340px
+    }
+
+    #toast.show {
+      transform: translateY(0)
+    }
+
+    #toast.s {
+      background: var(--success);
+      color: #000
+    }
+
+    #toast.e {
+      background: var(--danger);
+      color: #fff
+    }
+
+    #toast.i {
+      background: var(--blue);
+      color: #000
+    }
+
+    #toast.w {
+      background: var(--orange);
+      color: #000
+    }
+
+    ::-webkit-scrollbar {
+      width: 3px
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 2px
+    }
+
+    /* ── DRIVE SYNC ── */
+    .drive-status {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 10px 12px;
+      margin-top: 8px
+    }
+
+    .drive-status-line {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--muted);
+      line-height: 1.7
+    }
+
+    .drive-status-line b {
+      color: var(--text)
+    }
+
+    .drive-file-list {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      margin-top: 8px;
+      max-height: 180px;
+      overflow-y: auto
+    }
+
+    .drive-file {
+      font-family: var(--mono);
+      font-size: 9px;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 0
+    }
+
+    .drive-file b {
+      color: var(--text);
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap
+    }
+
+    .sync-spinner {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-right: 6px;
+      vertical-align: middle
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg) }
+    }
+
+    .drive-not-configured {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--muted);
+      text-align: center;
+      padding: 14px 0;
+      line-height: 1.8
+    }
+
+    /* ── PATIENT MODE ── */
+    body.patient-mode {
+      grid-template-columns: 1fr;
+    }
+
+    body.patient-mode aside {
+      display: none
+    }
+
+    body.patient-mode .hright {
+      display: none
+    }
+
+    body.patient-mode .logo em::after {
+      content: ' · HASTA';
+      color: var(--success);
+      font-size: 9px;
+      letter-spacing: 2px
+    }
+  </style>
+</head>
+
+<body>
+
+  <header>
+    <div class="logo">RAG<em>//</em>ENGINE</div>
+    <span class="hbadge">v4</span>
+    <div class="hright">
+      <span class="chunk-count" id="chunkCount"></span>
+      <div class="dot"></div>
+    </div>
+  </header>
+
+  <aside>
+
+    <!-- API KEY -->
+    <div class="sec">
+      <div class="sec-label">Gemini API Key</div>
+      <div class="row">
+        <input type="password" id="apiKey" placeholder="AIza..." autocomplete="off">
+        <button class="btn btn-y" onclick="saveKey()">OK</button>
+      </div>
+      <div style="margin-top:5px;font-family:var(--mono);font-size:9px;color:var(--muted)">
+        <a href="https://aistudio.google.com/app/apikey" target="_blank"
+          style="color:var(--blue)">aistudio.google.com</a> → ücretsiz key
+      </div>
+    </div>
+
+    <!-- KAYNAK EKLE -->
+    <div class="sec">
+      <div class="sec-label">Kaynak Ekle</div>
+      <div class="tabs">
+        <button class="tab active" onclick="switchTab('file')">📁 Dosya</button>
+        <button class="tab" onclick="switchTab('url')">🔗 URL</button>
+        <button class="tab" onclick="switchTab('site')">🕷️ Site</button>
+        <button class="tab" onclick="switchTab('drive')">☁️ Drive</button>
+      </div>
+
+      <!-- DOSYA -->
+      <div class="tab-pane active" id="tab-file">
+        <div class="drop-zone" id="dz">
+          <input type="file" id="fileInput" accept=".pdf,.txt,.md,.docx,.epub" multiple
+            onchange="handleFiles(this.files)">
+          <div class="di">📂</div>
+          <div class="dt"><b>Seç</b> veya sürükle<br>PDF · DOCX · EPUB · TXT · MD</div>
+        </div>
+        <div class="size-note">⚠ Maks 15 MB / dosya</div>
+        <div id="upProg" style="display:none;margin-top:7px;font-family:var(--mono);font-size:10px;color:var(--blue)">
+        </div>
+      </div>
+
+      <!-- TEK URL -->
+      <div class="tab-pane" id="tab-url">
+        <input type="url" id="urlInput" placeholder="YouTube linki veya herhangi bir URL" style="margin-bottom:7px">
+        <button class="btn btn-b btn-full" onclick="addUrl()">+ Ekle</button>
+      </div>
+
+      <!-- SITE CRAWL -->
+      <div class="tab-pane" id="tab-site">
+        <input type="url" id="crawlUrl" placeholder="https://doktor-site.com" style="margin-bottom:6px">
+        <div style="margin-bottom:6px">
+          <input type="text" id="queryHint" placeholder="Ne arıyorsun? (opsiyonel — otomatik dur için)">
+        </div>
+        <div class="crawl-hint">
+          <b>Katman sistemi:</b> Önce ana sayfa → bulamazsa +1 katman → her katman 50 sayfa.<br>
+          "Ne arıyorsun?" doldurursan yeterli içerik bulunca <b>otomatik durur</b>.
+        </div>
+        <button class="btn btn-o btn-full" onclick="startCrawl()" id="crawlBtn">🕷️ Katmanlı Tarama Başlat</button>
+
+        <!-- LAYER TRACKER -->
+        <div class="layer-track" id="layerTrack">
+          <div class="layer-header">
+            <span>🕷️ <span id="ltTitle">Taranıyor</span></span>
+            <span id="ltLayerBadge" style="color:var(--accent)"></span>
+          </div>
+          <div class="layer-body">
+            <div class="crawl-status-line" id="crawlStatusLine">Başlatılıyor...</div>
+            <div class="layer-bars" id="layerBars"></div>
+            <div class="pbar">
+              <div class="pbar-fill" id="pbarFill"></div>
+            </div>
+
+            <!-- Otomatik dur → karar sor -->
+            <div class="crawl-decision" id="crawlDecision">
+              <p id="decisionMsg"></p>
+              <div class="dbtns">
+                <button class="btn btn-success" style="flex:1" onclick="crawlDeeper()">🔽 Daha Derine In</button>
+                <button class="btn btn-outline" style="flex:1" onclick="crawlStop()">✅ Yeterli, Dur</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- GOOGLE DRIVE -->
+      <div class="tab-pane" id="tab-drive">
+        <div id="driveContent">
+          <div class="drive-not-configured" id="driveNotConfigured" style="display:none">
+            ⚠️ Google Drive yapılandırılmamış.<br>
+            <span style="font-size:8px">GOOGLE_DRIVE_FOLDER_ID ve<br>GOOGLE_SERVICE_ACCOUNT_JSON<br>env var'larını ayarlayın.</span>
+          </div>
+          <div id="driveConfigured" style="display:none">
+            <button class="btn btn-b btn-full" onclick="triggerDriveSync()" id="driveSyncBtn">🔄 Drive Sync</button>
+            <div class="drive-status" id="driveStatusBox" style="display:none">
+              <div class="drive-status-line" id="driveStatusLine">Bekleniyor...</div>
+              <div class="drive-file-list" id="driveFileList"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- BELGELER -->
+    <div class="sec" style="flex:1">
+      <div class="sec-label">
+        Belgeler
+        <button class="btn btn-danger" style="font-size:8px;padding:2px 7px" onclick="clearDocs()">Temizle</button>
+      </div>
+      <div class="docs-list" id="docsList">
+        <div class="empty-docs">Henüz belge yok</div>
+      </div>
+    </div>
+
+    <!-- SYSTEM PROMPT -->
+    <div class="sec">
+      <div class="sec-label">System Prompt</div>
+      <textarea id="sysPrompt">Sen yardımcı bir asistansın. Sana verilen kaynak belgelerden yararlanarak soruları yanıtla.
+Yanıtlarını YALNIZCA sağlanan kaynaklara dayandır. Kaynaklarda bilgi yoksa bunu belirt.
+Türkçe sorulara Türkçe, İngilizce sorulara İngilizce yanıt ver.</textarea>
+    </div>
+
+    <!-- AYARLAR -->
+    <div class="sec">
+      <div class="sec-label">Arama Ayarları</div>
+      <div class="topk-row">
+        <label>Kaynak sayısı (top-k)</label>
+        <input type="range" min="1" max="10" value="5" id="topK"
+          oninput="document.getElementById('topKVal').textContent=this.value">
+        <div class="topk-val" id="topKVal">5</div>
+      </div>
+    </div>
+
+  </aside>
+
+  <main>
+    <div class="chat-area" id="chatArea">
+      <div class="welcome" id="welcome">
+        <div class="welcome-icon">🧠</div>
+        <h2>RAG Engine v4</h2>
+        <p>Dosya · YouTube · URL · Katmanlı Site Tarama<br>Her katmanda 50 sayfa · Otomatik + Manuel kontrol<br>Gemini
+          API · Ücretsiz</p>
+      </div>
+    </div>
+    <div class="qbar">
+      <textarea class="qinput" id="qinput" placeholder="Kaynaklarınızla ilgili bir soru sorun..." rows="1"
+        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendQuery()}"></textarea>
+      <button class="sbtn" id="sbtn" onclick="sendQuery()">↑</button>
+    </div>
+  </main>
+
+  <div id="toast"></div>
+
+  <script>
+    let apiKey = localStorage.getItem('g_key') || '';
+    if (apiKey) { document.getElementById('apiKey').value = apiKey; document.getElementById('apiKey').classList.add('saved'); }
+
+    const _fetch = window.fetch;
+    window.fetch = (url, opts = {}) => {
+      if (typeof url === 'string' && url.startsWith('/') && apiKey)
+        opts.headers = { ...(opts.headers || {}), 'X-API-Key': apiKey };
+      return _fetch(url, opts);
+    };
+
+    function saveKey() {
+      apiKey = document.getElementById('apiKey').value.trim();
+      if (!apiKey) return toast('API key boş!', 'e');
+      localStorage.setItem('g_key', apiKey);
+      document.getElementById('apiKey').classList.add('saved');
+      toast('API Key kaydedildi ✓', 's'); loadDocs();
+    }
+
+    function switchTab(n) {
+      ['file', 'url', 'site', 'drive'].forEach((t, i) => {
+        document.querySelectorAll('.tab')[i].classList.toggle('active', t === n);
+        document.getElementById('tab-' + t).classList.toggle('active', t === n);
+      });
+      if (n === 'drive') loadDriveStatus();
+    }
+
+    function toast(msg, type = 'i') {
+      const t = document.getElementById('toast');
+      t.textContent = msg; t.className = 'show ' + type;
+      setTimeout(() => t.className = '', 4500);
+    }
+
+    // ── File Upload ────────────────────────────────────────────────────────────
+    async function handleFiles(files) {
+      if (!apiKey) return toast('Önce API key!', 'e');
+      const prog = document.getElementById('upProg');
+      prog.style.display = 'block';
+      for (const f of files) {
+        const mb = f.size / 1024 / 1024;
+        if (mb > 15) { toast(`"${f.name}" çok büyük (${mb.toFixed(1)} MB)`, 'w'); continue; }
+        prog.textContent = `Yükleniyor: ${f.name} (${mb.toFixed(1)} MB)...`;
+        const fd = new FormData(); fd.append('file', f);
+        try {
+          const res = await fetch('/upload', { method: 'POST', body: fd });
+          const d = await res.json();
+          if (!res.ok) throw new Error(d.detail);
+          toast(d.message, 's');
+        } catch (e) { toast(e.message, 'e'); }
+      }
+      prog.style.display = 'none'; loadDocs();
+    }
+    const dz = document.getElementById('dz');
+    dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('over') });
+    dz.addEventListener('dragleave', () => dz.classList.remove('over'));
+    dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('over'); handleFiles(e.dataTransfer.files) });
+
+    // ── Single URL ─────────────────────────────────────────────────────────────
+    async function addUrl() {
+      if (!apiKey) return toast('Önce API key!', 'e');
+      const url = document.getElementById('urlInput').value.trim();
+      if (!url) return toast('URL girin', 'e');
+      toast('İşleniyor...', 'i');
+      const fd = new FormData(); fd.append('url', url);
+      try {
+        const res = await fetch('/add-url', { method: 'POST', body: fd });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.detail);
+        toast(d.message, 's');
+        document.getElementById('urlInput').value = ''; loadDocs();
+      } catch (e) { toast(e.message, 'e'); }
+    }
+
+    // ── Layered Crawl ──────────────────────────────────────────────────────────
+    let crawlJobId = null;
+    let crawlInterval = null;
+    let layerCounts = {};  // layer_num → page count
+
+    async function startCrawl() {
+      if (!apiKey) return toast('Önce API key!', 'e');
+      const url = document.getElementById('crawlUrl').value.trim();
+      const hint = document.getElementById('queryHint').value.trim();
+      if (!url) return toast('URL girin', 'e');
+
+      layerCounts = {};
+      document.getElementById('crawlBtn').disabled = true;
+      document.getElementById('layerTrack').style.display = 'block';
+      document.getElementById('crawlDecision').style.display = 'none';
+      document.getElementById('pbarFill').className = 'pbar-fill';
+      document.getElementById('layerBars').innerHTML = '';
+      document.getElementById('ltTitle').textContent = 'Taranıyor';
+      document.getElementById('ltLayerBadge').textContent = '';
+      document.getElementById('crawlStatusLine').textContent = 'Başlatılıyor...';
+
+      const fd = new FormData(); fd.append('url', url); fd.append('query_hint', hint);
+      try {
+        const res = await fetch('/crawl-site', { method: 'POST', body: fd });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.detail);
+        crawlJobId = d.job_id;
+        toast('🕷️ Tarama başladı', 'i');
+        pollCrawl();
+      } catch (e) {
+        toast(e.message, 'e');
+        document.getElementById('crawlBtn').disabled = false;
+      }
+    }
+
+    function pollCrawl() {
+      clearInterval(crawlInterval);
+      crawlInterval = setInterval(async () => {
+        if (!crawlJobId) return;
+        try {
+          const res = await fetch(`/crawl-status/${crawlJobId}`);
+          const d = await res.json();
+          updateLayerUI(d);
+        } catch (e) { }
+      }, 1500);
+    }
+
+    function scoreClass(s) {
+      if (s === null || s === undefined) return '';
+      if (s < 0.35) return 'score-good';
+      if (s < 0.5) return 'score-mid';
+      return 'score-low';
+    }
+    function scoreLabel(s) {
+      if (s === null || s === undefined) return '';
+      if (s < 0.35) return '✓ iyi eşleşme';
+      if (s < 0.5) return '~ orta';
+      return '✗ zayıf';
+    }
+
+    function updateLayerUI(d) {
+      const statusLine = document.getElementById('crawlStatusLine');
+      const layerBadge = document.getElementById('ltLayerBadge');
+      const ltTitle = document.getElementById('ltTitle');
+      const decision = document.getElementById('crawlDecision');
+      const decisionMsg = document.getElementById('decisionMsg');
+      const pbar = document.getElementById('pbarFill');
+
+      if (d.layer) {
+        layerBadge.textContent = `Katman ${d.layer}`;
+        if (!layerCounts[d.layer]) layerCounts[d.layer] = 0;
+        layerCounts[d.layer] = d.total_pages || 0;
+        renderLayerBars(d);
+      }
+
+      const scoreHtml = d.score !== null && d.score !== undefined
+        ? `<span class="score-badge ${scoreClass(d.score)}">${scoreLabel(d.score)} (${d.score})</span>`
+        : '';
+
+      if (d.status === 'running') {
+        ltTitle.textContent = 'Taranıyor';
+        statusLine.innerHTML = `<b>${d.total_pages || 0}</b> sayfa · <b>${d.total_chunks || 0}</b> parça${scoreHtml}<br>
+        <span style="color:var(--muted)">${d.layer_status || ''}</span>`;
+        decision.style.display = 'none';
+      }
+      else if (d.status === 'paused') {
+        ltTitle.textContent = '⏸ Duraklatıldı';
+        statusLine.innerHTML = `<b>${d.total_pages}</b> sayfa · <b>${d.total_chunks}</b> parça${scoreHtml}`;
+        decisionMsg.textContent = d.message || 'Yeterli içerik bulundu. Devam edilsin mi?';
+        decision.style.display = 'block';
+        pbar.className = 'pbar-fill done';
+      }
+      else if (d.status === 'done') {
+        clearInterval(crawlInterval);
+        ltTitle.textContent = '✅ Tamamlandı';
+        layerBadge.textContent = `${d.layer || '?'} katman`;
+        statusLine.innerHTML = `<b>${d.total_pages}</b> sayfa · <b>${d.total_chunks}</b> parça${scoreHtml}`;
+        decision.style.display = 'none';
+        pbar.className = 'pbar-fill done';
+        document.getElementById('crawlBtn').disabled = false;
+        toast(d.message || '✅ Tarama tamamlandı', 's');
+        loadDocs();
+      }
+      else if (d.status === 'error') {
+        clearInterval(crawlInterval);
+        ltTitle.textContent = '❌ Hata';
+        statusLine.innerHTML = `<span style="color:var(--danger)">${d.message}</span>`;
+        decision.style.display = 'none';
+        document.getElementById('crawlBtn').disabled = false;
+        toast('Hata: ' + d.message, 'e');
+      }
+      else if (d.status === 'indexing') {
+        ltTitle.textContent = 'İndexleniyor';
+        statusLine.innerHTML = `<b>${d.total_pages || 0}</b> sayfa indexleniyor… <b>${d.total_chunks || 0}</b> parça${scoreHtml}`;
+      }
+    }
+
+    const BAR_COLORS = ['l1', 'l2', 'l3', 'l4', 'lx'];
+    function renderLayerBars(d) {
+      const container = document.getElementById('layerBars');
+      const maxPages = d.total_pages || 1;
+      let html = '';
+      for (let i = 1; i <= (d.layer || 1); i++) {
+        const cnt = i < (d.layer || 1) ? Math.min(50, maxPages) : (d.found || 0);
+        const pct = Math.max(6, Math.round((cnt / 50) * 100));
+        const cls = BAR_COLORS[Math.min(i - 1, BAR_COLORS.length - 1)];
+        html += `<div class="layer-bar">
+        <span class="layer-bar-num">${i}</span>
+        <div class="layer-bar-fill ${cls}" style="width:${pct}%"></div>
+        <span class="layer-bar-count">${cnt} sayfa</span>
+      </div>`;
+      }
+      container.innerHTML = html;
+    }
+
+    async function crawlDeeper() {
+      if (!crawlJobId) return;
+      document.getElementById('crawlDecision').style.display = 'none';
+      document.getElementById('pbarFill').className = 'pbar-fill';
+      await fetch(`/crawl-deeper/${crawlJobId}`, { method: 'POST' });
+      toast('Bir sonraki katmana geçiliyor...', 'i');
+    }
+
+    async function crawlStop() {
+      if (!crawlJobId) return;
+      await fetch(`/crawl-stop/${crawlJobId}`, { method: 'POST' });
+      clearInterval(crawlInterval);
+      document.getElementById('crawlDecision').style.display = 'none';
+      document.getElementById('pbarFill').className = 'pbar-fill done';
+      document.getElementById('ltTitle').textContent = '✅ Durduruldu';
+      document.getElementById('crawlBtn').disabled = false;
+      toast('Tarama durduruldu', 's'); loadDocs();
+    }
+
+    // ── Documents ──────────────────────────────────────────────────────────────
+    async function loadDocs() {
+      try {
+        const res = await fetch('/documents');
+        const d = await res.json();
+        document.getElementById('chunkCount').textContent = d.total_chunks ? d.total_chunks + ' parça' : '';
+        const list = document.getElementById('docsList');
+        if (!d.documents.length) { list.innerHTML = '<div class="empty-docs">Henüz belge yok</div>'; return; }
+        list.innerHTML = d.documents.map(doc => {
+          const icon = doc.name.startsWith('▶') ? '▶️'
+            : doc.type === 'web' || doc.name.startsWith('🌐') ? '🌐'
+              : doc.name.endsWith('.pdf') ? '📄'
+                : doc.name.endsWith('.epub') ? '📗'
+                  : doc.name.endsWith('.docx') ? '📝' : '📃';
+          const label = doc.name.length > 32 ? doc.name.slice(0, 30) + '…' : doc.name;
+          return `<div class="doc-item">
+          <span class="doc-icon">${icon}</span>
+          <span class="doc-name" title="${doc.name}">${label}</span>
+          <span class="doc-chunks">${doc.chunks}p</span>
+        </div>`;
+        }).join('');
+      } catch (e) { }
+    }
+
+    async function clearDocs() {
+      if (!confirm('Tüm belgeler silinsin mi?')) return;
+      await fetch('/documents', { method: 'DELETE' });
+      toast('Belgeler temizlendi', 's'); loadDocs();
+    }
+
+    // ── Chat ───────────────────────────────────────────────────────────────────
+    async function sendQuery() {
+      const q = document.getElementById('qinput').value.trim();
+      if (!q || !apiKey) { if (!apiKey) toast('API key girin', 'e'); return; }
+      document.getElementById('welcome')?.remove();
+      const chat = document.getElementById('chatArea');
+      const sbtn = document.getElementById('sbtn');
+      document.getElementById('qinput').value = '';
+      sbtn.disabled = true;
+
+      chat.insertAdjacentHTML('beforeend',
+        `<div class="msg msg-user"><div class="bubble">${esc(q)}</div></div>`);
+      const tid = 'tp' + Date.now();
+      chat.insertAdjacentHTML('beforeend',
+        `<div class="typing" id="${tid}"><span></span><span></span><span></span></div>`);
+      chat.scrollTop = chat.scrollHeight;
+
+      try {
+        const fd = new FormData();
+        fd.append('question', q);
+        fd.append('system_prompt', document.getElementById('sysPrompt').value);
+        fd.append('top_k', document.getElementById('topK').value);
+        const res = await fetch('/query', { method: 'POST', body: fd });
+        const d = await res.json();
+        document.getElementById(tid)?.remove();
+        if (!res.ok) throw new Error(d.detail);
+        const tags = d.sources.map(s => {
+          const lbl = s.startsWith('http') ? '🌐 ' + new URL(s).hostname : s;
+          return `<span class="stag">${esc(lbl)}</span>`;
+        }).join('');
+        chat.insertAdjacentHTML('beforeend',
+          `<div class="msg msg-ai">
+           <div class="bubble">${esc(d.answer)}</div>
+           ${tags ? `<div class="sources">${tags}</div>` : ''}
+         </div>`);
+      } catch (e) {
+        document.getElementById(tid)?.remove();
+        chat.insertAdjacentHTML('beforeend',
+          `<div class="msg msg-ai">
+           <div class="bubble" style="border-color:var(--danger);color:var(--danger)">⚠ ${esc(e.message)}</div>
+         </div>`);
+      }
+      sbtn.disabled = false;
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    function esc(t) {
+      return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    const qi = document.getElementById('qinput');
+    qi.addEventListener('input', () => { qi.style.height = 'auto'; qi.style.height = Math.min(qi.scrollHeight, 130) + 'px' });
+
+    loadDocs();
+
+    // ── Google Drive Sync ─────────────────────────────────────────────────────
+    let driveStatusInterval = null;
+
+    async function loadDriveStatus() {
+      try {
+        const res = await fetch('/drive-status');
+        const d = await res.json();
+        if (!d.drive_configured) {
+          document.getElementById('driveNotConfigured').style.display = 'block';
+          document.getElementById('driveConfigured').style.display = 'none';
+          return;
+        }
+        document.getElementById('driveNotConfigured').style.display = 'none';
+        document.getElementById('driveConfigured').style.display = 'block';
+        updateDriveUI(d);
+      } catch (e) { }
+    }
+
+    function updateDriveUI(d) {
+      const box = document.getElementById('driveStatusBox');
+      const line = document.getElementById('driveStatusLine');
+      const list = document.getElementById('driveFileList');
+      const btn = document.getElementById('driveSyncBtn');
+
+      if (d.status === 'idle' && !d.last_sync) {
+        box.style.display = 'none';
+        btn.disabled = false;
+        btn.textContent = '🔄 Drive Sync';
+        return;
+      }
+
+      box.style.display = 'block';
+
+      if (d.status === 'running') {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="sync-spinner"></span> Sync çalışıyor...';
+        line.innerHTML = `<span class="sync-spinner"></span> ${esc(d.message)}`;
+        if (!driveStatusInterval) {
+          driveStatusInterval = setInterval(pollDriveStatus, 2000);
+        }
+      } else if (d.status === 'done') {
+        btn.disabled = false;
+        btn.textContent = '🔄 Tekrar Sync';
+        const lastSync = d.last_sync ? new Date(d.last_sync).toLocaleString('tr-TR') : '—';
+        line.innerHTML = `${esc(d.message)}<br><span style="color:var(--muted)">Son sync: ${lastSync}</span>`;
+        clearInterval(driveStatusInterval);
+        driveStatusInterval = null;
+        loadDocs();
+      } else if (d.status === 'error') {
+        btn.disabled = false;
+        btn.textContent = '🔄 Tekrar Dene';
+        line.innerHTML = `<span style="color:var(--danger)">${esc(d.message)}</span>`;
+        clearInterval(driveStatusInterval);
+        driveStatusInterval = null;
+      }
+
+      // Dosya listesi
+      if (d.files && d.files.length > 0) {
+        list.innerHTML = d.files.map(f =>
+          `<div class="drive-file">📁 <b title="${esc(f.name)}">${esc(f.name.length > 28 ? f.name.slice(0,26)+'…' : f.name)}</b> <span>${f.chunks}p</span></div>`
+        ).join('');
+      } else {
+        list.innerHTML = '';
+      }
+    }
+
+    async function pollDriveStatus() {
+      try {
+        const res = await fetch('/drive-status');
+        const d = await res.json();
+        updateDriveUI(d);
+      } catch (e) { }
+    }
+
+    async function triggerDriveSync() {
+      if (!apiKey) return toast('Önce API key!', 'e');
+      try {
+        const res = await fetch('/sync-drive', { method: 'POST' });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.detail);
+        toast(d.message, 'i');
+        document.getElementById('driveSyncBtn').disabled = true;
+        document.getElementById('driveSyncBtn').innerHTML = '<span class="sync-spinner"></span> Sync çalışıyor...';
+        document.getElementById('driveStatusBox').style.display = 'block';
+        document.getElementById('driveStatusLine').innerHTML = '<span class="sync-spinner"></span> Başlatılıyor...';
+        driveStatusInterval = setInterval(pollDriveStatus, 2000);
+      } catch (e) { toast(e.message, 'e'); }
+    }
+
+    // ── Patient Mode ──────────────────────────────────────────────────────────
+    const isPatient = new URLSearchParams(window.location.search).get('mode') === 'patient';
+    if (isPatient) {
+      document.body.classList.add('patient-mode');
+      document.querySelector('.qinput').placeholder = 'Sorunuzu yazın...';
+      // Auto-load drive status for patient info
+      loadDriveStatus();
+    }
+
+    // Load Drive status on page load
+    loadDriveStatus();
+  </script>
+</body>
+
+</html>

@@ -1,0 +1,808 @@
+import os
+import uuid
+import httpx
+import re
+import io
+import json
+import asyncio
+import time
+import logging
+from pathlib import Path
+from typing import Optional
+from urllib.parse import urljoin, urlparse
+from collections import deque
+from datetime import datetime
+
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header, BackgroundTasks
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse
+from fastapi.middleware.cors import CORSMiddleware
+import chromadb
+from google import genai
+from google.genai import types
+
+import PyPDF2
+import docx
+import ebooklib
+from ebooklib import epub
+import requests
+from bs4 import BeautifulSoup
+from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound
+
+# Google Drive API
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseDownload
+
+# ─── App & DB ────────────────────────────────────────────────────────────────
+
+app = FastAPI(title="RAG API")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+CHROMA_PATH = "./chroma_db"
+chroma_client = chromadb.PersistentClient(path=CHROMA_PATH)
+collection = chroma_client.get_or_create_collection(
+    name="documents", metadata={"hnsw:space": "cosine"})
+
+# Job store: crawl_jobs[job_id] = {...}
+crawl_jobs: dict[str, dict] = {}
+
+# ─── Config ──────────────────────────────────────────────────────────────────
+
+GEMINI_API_KEY_ENV  = os.environ.get("GEMINI_API_KEY", "")
+
+MAX_FILE_SIZE_MB    = 15
+MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+CRAWL_DELAY_SEC     = 0.4          #礼儀 — sunucuyu zorlamayalım
+PAGES_PER_LAYER     = 50           # Katman başına max sayfa
+AUTO_SCORE_THRESHOLD = 0.45        # Bu skorun üstündeyse "yeterli" sayar (cosine distance, düşük = iyi)
+
+# ─── Google Drive Config ─────────────────────────────────────────────────────
+GOOGLE_DRIVE_FOLDER_ID      = os.environ.get("GOOGLE_DRIVE_FOLDER_ID", "1XkqOenGiKibLX54zKNWefxtGiWIioWTX")
+
+# Credentials: env var (JSON string) veya dosya yolu
+_sa_env = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+if _sa_env and os.path.isfile(_sa_env):
+    GOOGLE_SERVICE_ACCOUNT_JSON = Path(_sa_env).read_text(encoding="utf-8")
+elif _sa_env:
+    GOOGLE_SERVICE_ACCOUNT_JSON = _sa_env
+elif os.path.isfile("service_account.json"):
+    GOOGLE_SERVICE_ACCOUNT_JSON = Path("service_account.json").read_text(encoding="utf-8")
+else:
+    GOOGLE_SERVICE_ACCOUNT_JSON = ""
+
+# Drive sync state
+drive_sync_status: dict = {
+    "status": "idle",       # idle | running | done | error
+    "last_sync": None,
+    "files_synced": 0,
+    "total_chunks": 0,
+    "message": "",
+    "files": [],            # [{name, chunks, drive_id}]
+}
+
+DEFAULT_SYSTEM_PROMPT = """Sen yardımcı bir asistansın. Sana verilen kaynak belgelerden yararlanarak soruları yanıtla.
+Yanıtlarını YALNIZCA sağlanan kaynaklara dayandır. Kaynaklarda bilgi yoksa bunu belirt.
+Türkçe sorulara Türkçe, İngilizce sorulara İngilizce yanıt ver."""
+
+def get_api_key(x: Optional[str] = None) -> str:
+    return x or GEMINI_API_KEY_ENV or ""
+
+# ─── Text & Embed Helpers ────────────────────────────────────────────────────
+
+def chunk_text(text: str, size: int = 800, overlap: int = 150) -> list[str]:
+    words = text.split()
+    chunks, i = [], 0
+    while i < len(words):
+        chunks.append(" ".join(words[i:i + size]))
+        i += size - overlap
+    return [c for c in chunks if len(c.strip()) > 50]
+
+async def get_embedding(text: str, api_key: str) -> list[float]:
+    client = genai.Client(api_key=api_key)
+    try:
+        response = await asyncio.to_thread(
+            client.models.embed_content,
+            model='gemini-embedding-001',
+            contents=text[:8000]
+        )
+        return response.embeddings[0].values
+    except Exception as e:
+        import traceback
+        with open("error_log.txt", "a", encoding="utf-8") as f:
+            f.write(f"\n{'='*60}\n{traceback.format_exc()}\n")
+        raise
+
+async def gemini_chat(prompt: str, system_prompt: str, api_key: str) -> str:
+    client = genai.Client(api_key=api_key)
+    response = await asyncio.to_thread(
+        client.models.generate_content,
+        model='gemini-2.5-flash',
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=system_prompt,
+            temperature=0.1,
+            max_output_tokens=8192
+        )
+    )
+    return response.text
+
+async def index_chunks(chunks: list[str], source: str, meta: dict, api_key: str) -> int:
+    doc_id = str(uuid.uuid4())[:8]
+    embs, ids, metas, docs = [], [], [], []
+    for i, c in enumerate(chunks):
+        embs.append(await get_embedding(c, api_key))
+        ids.append(f"{doc_id}_{i}")
+        metas.append({"source": source, "chunk": i, **{k: str(v) for k, v in meta.items()}})
+        docs.append(c)
+    if embs:
+        collection.add(embeddings=embs, ids=ids, metadatas=metas, documents=docs)
+    return len(embs)
+
+# ─── Auto-score: "bu konuda yeterli içerik var mı?" ──────────────────────────
+
+async def content_score(query_hint: str, api_key: str) -> float:
+    """
+    Index'e bir skor sorgusu atar.
+    En iyi eşleşmenin cosine distance'ını döner (0=mükemmel, 1=alakasız).
+    Skor < threshold → "yeterli içerik bulundu".
+    query_hint yoksa 1.0 döner (her zaman devam et).
+    """
+    if not query_hint or collection.count() == 0:
+        return 1.0
+    emb = await get_embedding(query_hint, api_key)
+    res = collection.query(query_embeddings=[emb], n_results=1)
+    distances = res.get("distances", [[1.0]])[0]
+    return distances[0] if distances else 1.0
+
+# ─── File Extractors ─────────────────────────────────────────────────────────
+
+def extract_pdf(data: bytes) -> str:
+    return "\n".join(p.extract_text() or "" for p in PyPDF2.PdfReader(io.BytesIO(data)).pages)
+
+def extract_docx_b(data: bytes) -> str:
+    return "\n".join(p.text for p in docx.Document(io.BytesIO(data)).paragraphs)
+
+def extract_epub_b(data: bytes) -> str:
+    book = epub.read_epub(io.BytesIO(data))
+    parts = []
+    for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
+        soup = BeautifulSoup(item.get_content(), "html.parser")
+        for t in soup(["script", "style"]): t.decompose()
+        parts.append(soup.get_text(" "))
+    return " ".join(parts)
+
+# ─── Google Drive Helpers ─────────────────────────────────────────────────────
+
+DRIVE_SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
+DRIVE_MIME_MAP = {
+    'application/pdf': 'pdf',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+    'application/epub+zip': 'epub',
+    'text/plain': 'txt',
+    'text/markdown': 'md',
+    # Google Docs → export as plain text
+    'application/vnd.google-apps.document': 'gdoc',
+}
+
+def get_drive_service():
+    """Service Account ile Google Drive API client oluşturur."""
+    if not GOOGLE_SERVICE_ACCOUNT_JSON:
+        raise RuntimeError("GOOGLE_SERVICE_ACCOUNT_JSON ayarlanmamış")
+    info = json.loads(GOOGLE_SERVICE_ACCOUNT_JSON)
+    creds = service_account.Credentials.from_service_account_info(info, scopes=DRIVE_SCOPES)
+    return build('drive', 'v3', credentials=creds)
+
+def list_drive_files(service, folder_id: str) -> list[dict]:
+    """Drive klasöründeki desteklenen dosyaları listeler."""
+    query = f"'{folder_id}' in parents and trashed = false"
+    results = []
+    page_token = None
+    while True:
+        resp = service.files().list(
+            q=query,
+            fields="nextPageToken, files(id, name, mimeType, modifiedTime, size)",
+            pageSize=100,
+            pageToken=page_token
+        ).execute()
+        for f in resp.get('files', []):
+            mime = f.get('mimeType', '')
+            if mime in DRIVE_MIME_MAP or mime.startswith('text/'):
+                results.append(f)
+        page_token = resp.get('nextPageToken')
+        if not page_token:
+            break
+    return results
+
+def download_drive_file(service, file_info: dict) -> bytes:
+    """Drive dosyasını indirir. Google Docs ise text/plain olarak export eder."""
+    mime = file_info.get('mimeType', '')
+    if mime == 'application/vnd.google-apps.document':
+        # Google Docs → export
+        req = service.files().export_media(fileId=file_info['id'], mimeType='text/plain')
+    else:
+        req = service.files().get_media(fileId=file_info['id'])
+    buf = io.BytesIO()
+    downloader = MediaIoBaseDownload(buf, req)
+    done = False
+    while not done:
+        _, done = downloader.next_chunk()
+    return buf.getvalue()
+
+def extract_text_from_drive_file(data: bytes, mime: str) -> str:
+    """Dosya verisinden metin çıkarır."""
+    ext = DRIVE_MIME_MAP.get(mime, '')
+    if ext == 'pdf':
+        return extract_pdf(data)
+    elif ext == 'docx':
+        return extract_docx_b(data)
+    elif ext == 'epub':
+        return extract_epub_b(data)
+    elif ext in ('txt', 'md', 'gdoc') or mime.startswith('text/'):
+        return data.decode('utf-8', errors='ignore')
+    return ""
+
+def get_indexed_drive_ids() -> set[str]:
+    """ChromaDB'deki Drive kaynaklı dosya ID'lerini döner."""
+    if collection.count() == 0:
+        return set()
+    items = collection.get(include=["metadatas"])
+    ids = set()
+    for m in items["metadatas"]:
+        if m.get("type") == "drive" and m.get("drive_id"):
+            ids.add(m["drive_id"])
+    return ids
+
+def remove_drive_file_from_index(drive_id: str):
+    """Belirli bir Drive dosyasının tüm chunk'larını ChromaDB'den siler."""
+    if collection.count() == 0:
+        return
+    items = collection.get(include=["metadatas"])
+    ids_to_delete = []
+    for idx, m in enumerate(items["metadatas"]):
+        if m.get("drive_id") == drive_id:
+            ids_to_delete.append(items["ids"][idx])
+    if ids_to_delete:
+        collection.delete(ids=ids_to_delete)
+
+async def sync_drive_folder(api_key: str):
+    """Drive klasörünü senkronize eder → yeni/değişen dosyaları indexler, silinenleri kaldırır."""
+    global drive_sync_status
+    drive_sync_status.update({
+        "status": "running",
+        "message": "Drive klasörü taranıyor...",
+        "files_synced": 0,
+        "total_chunks": 0,
+        "files": [],
+    })
+
+    try:
+        service = await asyncio.to_thread(get_drive_service)
+        drive_files = await asyncio.to_thread(list_drive_files, service, GOOGLE_DRIVE_FOLDER_ID)
+
+        # Mevcut index'teki drive dosya ID'leri
+        indexed_ids = await asyncio.to_thread(get_indexed_drive_ids)
+        drive_file_ids = {f['id'] for f in drive_files}
+
+        # Silinen dosyaları kaldır
+        removed_ids = indexed_ids - drive_file_ids
+        for rid in removed_ids:
+            await asyncio.to_thread(remove_drive_file_from_index, rid)
+
+        # Mevcut index'teki dosya modifiedTime'larını kontrol et
+        indexed_times = {}
+        if collection.count() > 0:
+            items = collection.get(include=["metadatas"])
+            for m in items["metadatas"]:
+                if m.get("type") == "drive" and m.get("drive_id"):
+                    indexed_times[m["drive_id"]] = m.get("modified_time", "")
+
+        synced = 0
+        total_chunks = 0
+        file_list = []
+
+        for f in drive_files:
+            fid = f['id']
+            fname = f['name']
+            mime = f.get('mimeType', '')
+            mod_time = f.get('modifiedTime', '')
+
+            # Zaten indexlenmiş ve değişmemiş → atla
+            if fid in indexed_times and indexed_times[fid] == mod_time:
+                # Mevcut chunk sayısını hesapla
+                existing_chunks = sum(
+                    1 for m in items["metadatas"] if m.get("drive_id") == fid
+                )
+                file_list.append({"name": fname, "chunks": existing_chunks, "drive_id": fid})
+                total_chunks += existing_chunks
+                continue
+
+            # Değişmiş dosya → eski chunk'ları sil
+            if fid in indexed_ids:
+                await asyncio.to_thread(remove_drive_file_from_index, fid)
+
+            drive_sync_status["message"] = f"İndiriliyor: {fname}..."
+
+            try:
+                data = await asyncio.to_thread(download_drive_file, service, f)
+                text = extract_text_from_drive_file(data, mime)
+                if not text.strip():
+                    continue
+
+                chunks = chunk_text(text)
+                n = await index_chunks(
+                    chunks, f"📁 {fname}",
+                    {"type": "drive", "drive_id": fid, "modified_time": mod_time},
+                    api_key
+                )
+                synced += 1
+                total_chunks += n
+                file_list.append({"name": fname, "chunks": n, "drive_id": fid})
+                drive_sync_status.update({
+                    "files_synced": synced,
+                    "total_chunks": total_chunks,
+                    "message": f"Indexlendi: {fname} ({n} parça)",
+                })
+            except Exception as e:
+                logging.warning(f"Drive dosyası işlenemedi: {fname} — {e}")
+                continue
+
+        drive_sync_status.update({
+            "status": "done",
+            "last_sync": datetime.now().isoformat(),
+            "files_synced": synced,
+            "total_chunks": total_chunks,
+            "files": file_list,
+            "message": f"✅ {synced} yeni dosya indexlendi, toplam {len(file_list)} dosya · {total_chunks} parça",
+        })
+    except Exception as e:
+        drive_sync_status.update({
+            "status": "error",
+            "message": f"❌ Sync hatası: {e}",
+        })
+        logging.error(f"Drive sync error: {e}")
+
+
+def clean_html(html: str) -> str:
+    soup = BeautifulSoup(html, "html.parser")
+    for t in soup(["script", "style", "nav", "footer", "header", "aside", "form"]):
+        t.decompose()
+    return " ".join(soup.get_text(" ").split())
+
+# ─── YouTube ─────────────────────────────────────────────────────────────────
+
+def yt_video_id(url: str) -> Optional[str]:
+    for p in [r"(?:youtube\.com/watch\?.*v=)([a-zA-Z0-9_-]{11})",
+              r"(?:youtu\.be/)([a-zA-Z0-9_-]{11})",
+              r"(?:youtube\.com/embed/)([a-zA-Z0-9_-]{11})",
+              r"(?:youtube\.com/shorts/)([a-zA-Z0-9_-]{11})"]:
+        m = re.search(p, url)
+        if m: return m.group(1)
+    return None
+
+def fetch_yt(vid: str) -> tuple[str, str]:
+    try:
+        tl = YouTubeTranscriptApi.list_transcripts(vid)
+        try: t = tl.find_manually_created_transcript(["tr", "en"])
+        except Exception:
+            try: t = tl.find_generated_transcript(["tr", "en"])
+            except Exception: t = next(iter(tl))
+        tr = t.fetch()
+    except (TranscriptsDisabled, NoTranscriptFound):
+        tr = YouTubeTranscriptApi.get_transcript(vid)
+    text = re.sub(r"\s+", " ", re.sub(r"\[.*?\]", "", " ".join(e["text"] for e in tr))).strip()
+    try:
+        r = requests.get(f"https://www.youtube.com/watch?v={vid}",
+                         headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        m = re.search(r'"title":"([^"]+)"', r.text)
+        title = m.group(1) if m else f"YouTube:{vid}"
+    except Exception:
+        title = f"YouTube:{vid}"
+    return text, title
+
+# ─── Layered BFS Crawler ─────────────────────────────────────────────────────
+
+SKIP_EXT = re.compile(
+    r"\.(jpg|jpeg|png|gif|webp|pdf|zip|mp4|mp3|css|js|svg|ico|woff|woff2|ttf|exe|dmg)$", re.I)
+
+def get_sitemap_urls(base: str) -> list[str]:
+    parsed = urlparse(base)
+    root   = f"{parsed.scheme}://{parsed.netloc}"
+    urls   = []
+    for path in ["/sitemap.xml", "/sitemap_index.xml", "/sitemap/"]:
+        try:
+            r = requests.get(root + path, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+            if r.status_code == 200 and "xml" in r.headers.get("content-type", ""):
+                soup = BeautifulSoup(r.text, "xml")
+                for stag in soup.find_all("sitemap"):
+                    loc = stag.find("loc")
+                    if loc:
+                        try:
+                            r2 = requests.get(loc.text.strip(), timeout=10,
+                                              headers={"User-Agent": "Mozilla/5.0"})
+                            s2 = BeautifulSoup(r2.text, "xml")
+                            urls += [t.text.strip() for t in s2.find_all("loc")]
+                        except Exception: pass
+                urls += [t.text.strip() for t in soup.find_all("loc")
+                         if not t.find_parent("sitemap")]
+                if urls: break
+        except Exception: continue
+    domain = parsed.netloc
+    return [u for u in urls if urlparse(u).netloc == domain]
+
+
+def crawl_one_layer(
+    frontier: list[str],       # Bu katmanın taranacak URL listesi
+    visited:  set[str],
+    domain:   str,
+    session:  requests.Session,
+    max_pages: int = PAGES_PER_LAYER,
+) -> tuple[list[tuple[str,str]], list[str]]:
+    """
+    frontier listesinden max_pages kadar sayfa tara.
+    Returns:
+      pages      = [(url, text), ...]   — bu katmanda bulunan içerikler
+      next_layer = [url, ...]           — sonraki katman için keşfedilen linkler
+    """
+    pages:      list[tuple[str,str]] = []
+    next_layer: list[str]            = []
+    seen_next:  set[str]             = set()
+
+    for url in frontier:
+        if len(pages) >= max_pages:
+            break
+        url = url.split("#")[0].rstrip("/")
+        if url in visited or SKIP_EXT.search(url):
+            continue
+        visited.add(url)
+
+        try:
+            r  = session.get(url, timeout=12)
+            ct = r.headers.get("content-type", "")
+            if "html" not in ct:
+                continue
+            text = clean_html(r.text)
+            if len(text.strip()) < 100:
+                continue
+            pages.append((url, text))
+
+            # Sonraki katman için linkleri topla
+            soup = BeautifulSoup(r.text, "html.parser")
+            for a in soup.find_all("a", href=True):
+                href = a["href"].strip()
+                full = urljoin(url, href).split("#")[0].rstrip("/")
+                if (urlparse(full).netloc == domain
+                        and full not in visited
+                        and full not in seen_next
+                        and not SKIP_EXT.search(full)):
+                    next_layer.append(full)
+                    seen_next.add(full)
+
+            time.sleep(CRAWL_DELAY_SEC)
+        except Exception:
+            continue
+
+    return pages, next_layer
+
+
+async def layered_crawl_and_index(
+    start_url:  str,
+    job_id:     str,
+    api_key:    str,
+    query_hint: str = "",
+):
+    """
+    Katman katman tara + her katman sonrası otomatik skor kontrolü.
+    crawl_jobs[job_id] canlı güncellenir.
+    Kullanıcı 'deeper' isteği de buraya yansır (job["force_next"]).
+    """
+    domain  = urlparse(start_url).netloc
+    session = requests.Session()
+    session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; RAGBot/1.0)"})
+
+    visited:      set[str]  = set()
+    total_pages:  int       = 0
+    total_chunks: int       = 0
+    layer_num:    int       = 0
+
+    # Başlangıç frontier: sitemap varsa oradan, yoksa ana sayfa
+    sitemap_urls = get_sitemap_urls(start_url)
+    if sitemap_urls:
+        frontier    = sitemap_urls
+        using_sitemap = True
+    else:
+        frontier    = [start_url]
+        using_sitemap = False
+
+    crawl_jobs[job_id].update({
+        "status": "running", "layer": 0,
+        "total_pages": 0, "total_chunks": 0,
+        "score": None, "auto_stopped": False,
+        "force_next": False, "paused": False,
+        "using_sitemap": using_sitemap,
+        "domain": domain,
+    })
+
+    while frontier:
+        layer_num += 1
+        crawl_jobs[job_id].update({
+            "layer": layer_num,
+            "layer_status": f"Katman {layer_num} taranıyor ({min(len(frontier), PAGES_PER_LAYER)} sayfa)...",
+            "paused": False,
+        })
+
+        # ── Tarama (sync → thread) ──────────────────────────────────────────
+        pages, next_frontier = await asyncio.to_thread(
+            crawl_one_layer, frontier[:PAGES_PER_LAYER * 3],
+            visited, domain, session, PAGES_PER_LAYER)
+
+        # ── Index ───────────────────────────────────────────────────────────
+        crawl_jobs[job_id]["layer_status"] = f"Katman {layer_num} indexleniyor ({len(pages)} sayfa)..."
+        for url, text in pages:
+            chunks = chunk_text(text)
+            n = await index_chunks(chunks, f"🌐 {domain}", {"type": "web", "url": url, "layer": layer_num}, api_key)
+            total_chunks += n
+        total_pages += len(pages)
+
+        crawl_jobs[job_id].update({
+            "total_pages":  total_pages,
+            "total_chunks": total_chunks,
+        })
+
+        # ── Skor kontrolü ───────────────────────────────────────────────────
+        score = await content_score(query_hint, api_key) if query_hint else None
+        crawl_jobs[job_id]["score"] = round(score, 3) if score is not None else None
+
+        # Sonraki katmana link kalmadıysa bitti
+        if not next_frontier:
+            crawl_jobs[job_id].update({
+                "status": "done",
+                "message": f"✅ Site tamamen tarandı — {total_pages} sayfa · {total_chunks} parça · {layer_num} katman",
+                "auto_stopped": False,
+            })
+            return
+
+        # Sitemap modunda tüm URL'ler tek frontier'da, katman kavramı yok → tek turda bit
+        if using_sitemap:
+            frontier = []  # sitemap zaten hepsini verdi
+        else:
+            frontier = next_frontier
+
+        # ── Otomatik dur kararı ─────────────────────────────────────────────
+        if query_hint and score is not None and score < AUTO_SCORE_THRESHOLD:
+            crawl_jobs[job_id].update({
+                "status": "paused",
+                "paused": True,
+                "auto_stopped": True,
+                "layer_status": f"✅ Katman {layer_num} yeterli — skor {score:.2f}",
+                "message": (f"Katman {layer_num} tamamlandı. "
+                            f"Yeterli içerik bulundu (skor: {score:.2f}). "
+                            f"Daha derine inmek ister misin?"),
+            })
+            # Kullanıcının 'deeper' veya 'stop' demesini bekle
+            while True:
+                await asyncio.sleep(1)
+                job = crawl_jobs.get(job_id, {})
+                if job.get("force_next"):
+                    crawl_jobs[job_id]["force_next"] = False
+                    break  # devam et
+                if job.get("force_stop"):
+                    crawl_jobs[job_id].update({"status": "done",
+                        "message": f"✅ Durduruldu — {total_pages} sayfa · {total_chunks} parça"})
+                    return
+        else:
+            # Otomatik dur değil → kısa "katman bitti" mesajı ver ve devam et
+            score_txt = f" · skor {score:.2f}" if score is not None else ""
+            crawl_jobs[job_id]["layer_status"] = (
+                f"Katman {layer_num} bitti ({total_pages} sayfa{score_txt}), devam ediliyor...")
+            await asyncio.sleep(0.2)  # UI'nın görmesi için mini bekleme
+
+    crawl_jobs[job_id].update({
+        "status": "done",
+        "message": f"✅ {total_pages} sayfa · {total_chunks} parça · {layer_num} katman",
+    })
+
+
+# ─── Startup: Auto-sync Drive ────────────────────────────────────────────────
+
+@app.on_event("startup")
+async def startup_sync():
+    """Uygulama başlatılınca Drive klasörünü otomatik sync et."""
+    if GOOGLE_DRIVE_FOLDER_ID and GOOGLE_SERVICE_ACCOUNT_JSON:
+        api_key = GEMINI_API_KEY_ENV
+        if api_key:
+            logging.info("🔄 Startup: Google Drive sync başlatılıyor...")
+            asyncio.create_task(sync_drive_folder(api_key))
+        else:
+            logging.warning("Drive sync atlanıyor: GEMINI_API_KEY ayarlanmamış")
+    else:
+        logging.info("Drive sync atlanıyor: GOOGLE_DRIVE_FOLDER_ID veya credentials yok")
+
+# ─── Routes ──────────────────────────────────────────────────────────────────
+
+@app.get("/", response_class=HTMLResponse)
+async def serve_ui():
+    return Path("static/index.html").read_text(encoding="utf-8")
+
+# ── File upload ──────────────────────────────────────────────────────────────
+
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...), x_api_key: Optional[str] = Header(None)):
+    api_key = get_api_key(x_api_key)
+    if not api_key: raise HTTPException(400, "GEMINI_API_KEY ayarlanmamış")
+
+    content  = await file.read()
+    filename = file.filename or "unknown"
+    size_mb  = len(content) / (1024 * 1024)
+
+    if len(content) > MAX_FILE_SIZE_BYTES:
+        raise HTTPException(413,
+            f"⚠️ Dosya çok büyük: {size_mb:.1f} MB (limit: {MAX_FILE_SIZE_MB} MB).")
+
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    try:
+        if   ext == "pdf":                  text = extract_pdf(content)
+        elif ext == "docx":                 text = extract_docx_b(content)
+        elif ext == "epub":                 text = extract_epub_b(content)
+        elif ext in ("txt","md","markdown"):text = content.decode("utf-8", errors="ignore")
+        else: raise HTTPException(400, f"Desteklenmeyen format: .{ext}")
+    except HTTPException: raise
+    except Exception as e: raise HTTPException(400, f"Dosya okunamadı: {e}")
+
+    if not text.strip():
+        raise HTTPException(400, "Dosyadan metin çıkarılamadı.")
+
+    chunks = chunk_text(text)
+    await index_chunks(chunks, filename, {"type": "file", "size_mb": round(size_mb, 2)}, api_key)
+    return {"message": f"✅ '{filename}' yüklendi ({len(chunks)} parça · {size_mb:.1f} MB)"}
+
+# ── Single URL ───────────────────────────────────────────────────────────────
+
+@app.post("/add-url")
+async def add_url(url: str = Form(...), x_api_key: Optional[str] = Header(None)):
+    api_key = get_api_key(x_api_key)
+    if not api_key: raise HTTPException(400, "GEMINI_API_KEY ayarlanmamış")
+
+    vid = yt_video_id(url)
+    if vid:
+        try:
+            text, title = await asyncio.to_thread(fetch_yt, vid)
+            source, extra = f"▶ {title}", {"type": "youtube", "url": url}
+        except Exception as e:
+            raise HTTPException(400, f"YouTube transkripti alınamadı: {e}")
+    else:
+        try:
+            r      = await asyncio.to_thread(lambda: requests.get(url, timeout=15,
+                        headers={"User-Agent": "Mozilla/5.0"}))
+            text   = clean_html(r.text)
+            source, extra = url, {"type": "web", "url": url}
+        except Exception as e:
+            raise HTTPException(400, f"URL okunamadı: {e}")
+
+    if not text.strip(): raise HTTPException(400, "İçerik boş")
+    chunks = chunk_text(text)
+    await index_chunks(chunks, source, extra, api_key)
+    return {"message": f"✅ {'▶' if vid else '🌐'} Eklendi ({len(chunks)} parça)"}
+
+# ── Layered site crawl ───────────────────────────────────────────────────────
+
+@app.post("/crawl-site")
+async def start_crawl(
+    url:         str  = Form(...),
+    query_hint:  str  = Form(""),          # Opsiyonel: ne arıyorum?
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+    x_api_key: Optional[str] = Header(None)
+):
+    api_key = get_api_key(x_api_key)
+    if not api_key: raise HTTPException(400, "GEMINI_API_KEY ayarlanmamış")
+    p = urlparse(url)
+    if not p.scheme or not p.netloc: raise HTTPException(400, "Geçersiz URL")
+
+    job_id = str(uuid.uuid4())[:8]
+    crawl_jobs[job_id] = {"status": "queued", "url": url, "query_hint": query_hint}
+    background_tasks.add_task(layered_crawl_and_index, url, job_id, api_key, query_hint)
+    return {"job_id": job_id, "message": "🕷️ Katmanlı tarama başladı"}
+
+@app.get("/crawl-status/{job_id}")
+async def crawl_status(job_id: str):
+    if job_id not in crawl_jobs: raise HTTPException(404, "Job bulunamadı")
+    return crawl_jobs[job_id]
+
+@app.post("/crawl-deeper/{job_id}")
+async def crawl_deeper(job_id: str):
+    """Kullanıcı 'daha derine in' dedi."""
+    if job_id not in crawl_jobs: raise HTTPException(404, "Job bulunamadı")
+    crawl_jobs[job_id]["force_next"] = True
+    crawl_jobs[job_id]["paused"]     = False
+    return {"message": "Bir sonraki katmana geçiliyor..."}
+
+@app.post("/crawl-stop/{job_id}")
+async def crawl_stop(job_id: str):
+    """Kullanıcı 'yeter' dedi."""
+    if job_id not in crawl_jobs: raise HTTPException(404, "Job bulunamadı")
+    crawl_jobs[job_id]["force_stop"] = True
+    return {"message": "Tarama durduruluyor..."}
+
+# ── Query ────────────────────────────────────────────────────────────────────
+
+@app.post("/query")
+async def query(
+    question:      str = Form(...),
+    system_prompt: str = Form(DEFAULT_SYSTEM_PROMPT),
+    top_k:         int = Form(5),
+    x_api_key: Optional[str] = Header(None)
+):
+    api_key = get_api_key(x_api_key)
+    if not api_key: raise HTTPException(400, "GEMINI_API_KEY ayarlanmamış")
+    if collection.count() == 0: raise HTTPException(400, "Henüz belge yüklenmedi")
+
+    q_emb   = await get_embedding(question, api_key)
+    results = collection.query(query_embeddings=[q_emb],
+                               n_results=min(top_k, collection.count()))
+    chunks  = results["documents"][0]
+    metas   = results["metadatas"][0]
+    sources = list({m["source"] for m in metas})
+
+    context = "\n\n---\n\n".join(
+        f"[Kaynak: {metas[i]['source']}]\n{c}" for i, c in enumerate(chunks))
+    answer  = await gemini_chat(
+        f"Aşağıdaki kaynaklardan yararlanarak soruyu yanıtla:\n\n{context}\n\nSoru: {question}",
+        system_prompt, api_key)
+
+    return {"answer": answer, "sources": sources, "chunks_used": len(chunks)}
+
+# ── Documents ────────────────────────────────────────────────────────────────
+
+@app.get("/documents")
+async def list_documents():
+    if collection.count() == 0:
+        return {"documents": [], "total_chunks": 0}
+    items = collection.get(include=["metadatas"])
+    srcs: dict[str, dict] = {}
+    for m in items["metadatas"]:
+        s = m["source"]
+        if s not in srcs:
+            srcs[s] = {"name": s, "chunks": 0, "type": m.get("type","file")}
+        srcs[s]["chunks"] += 1
+    return {"documents": list(srcs.values()), "total_chunks": collection.count()}
+
+@app.delete("/documents")
+async def clear_all():
+    chroma_client.delete_collection("documents")
+    global collection
+    collection = chroma_client.get_or_create_collection(
+        name="documents", metadata={"hnsw:space": "cosine"})
+    return {"message": "Tüm belgeler silindi"}
+
+# ── Google Drive Sync ────────────────────────────────────────────────────────
+
+@app.post("/sync-drive")
+async def sync_drive(
+    background_tasks: BackgroundTasks,
+    x_api_key: Optional[str] = Header(None)
+):
+    """Manuel Drive sync tetikler."""
+    if not GOOGLE_DRIVE_FOLDER_ID:
+        raise HTTPException(400, "GOOGLE_DRIVE_FOLDER_ID ayarlanmamış")
+    if not GOOGLE_SERVICE_ACCOUNT_JSON:
+        raise HTTPException(400, "GOOGLE_SERVICE_ACCOUNT_JSON ayarlanmamış")
+    if drive_sync_status["status"] == "running":
+        raise HTTPException(409, "Sync zaten çalışıyor")
+
+    api_key = get_api_key(x_api_key)
+    if not api_key:
+        raise HTTPException(400, "GEMINI_API_KEY ayarlanmamış")
+
+    background_tasks.add_task(sync_drive_folder, api_key)
+    return {"message": "🔄 Drive sync başlatıldı"}
+
+@app.get("/drive-status")
+async def get_drive_status():
+    """Drive sync durumunu döner."""
+    return {
+        **drive_sync_status,
+        "drive_configured": bool(GOOGLE_DRIVE_FOLDER_ID and GOOGLE_SERVICE_ACCOUNT_JSON),
+    }
+
+app.mount("/static", StaticFiles(directory="static"), name="static")

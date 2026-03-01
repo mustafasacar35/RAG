@@ -1,0 +1,45 @@
+
+🏗️ Önerilen Mimari
+Google Drive (senin dosyaların)
+        ↓ sync
+   RAG Uygulaması (Render'da)
+        ↓ ChromaDB + Gemini
+   Web Arayüzü ← Sorgula
+    ↑         ↑
+   Sen      Hastaların
+(admin)    (sadece soru sorar)
+Nasıl Çalışır?
+Google Drive'da bir klasör oluşturursun, tıbbi dosyalarını (PDF, DOCX vb.) oraya koyarsın
+Uygulama bu klasörü senkronize eder → dosyaları indirir, parçalar, embedding oluşturur, ChromaDB'ye kaydeder
+Hastalar sadece soru sorar, dosya yükleyemez
+⚠️ Önemli Kararlar
+1. Google Drive Erişim Yöntemi
+Yöntem	Avantaj	Dezavantaj
+Service Account (önerim)	Kurulumu basit, OAuth gerektirmez	Dosyaları service account ile paylaşman gerekir
+OAuth2	Tam Drive erişimi	Kullanıcı login akışı lazım, karmaşık
+Public link	En basit	Dosyalar herkese açık olur
+→ Service Account en pratik: Google Cloud'da bir tane oluşturursun, Drive klasörünü onunla paylaşırsın, uygulama otomatik erişir.
+
+2. Render'da Kalıcılık Sorunu
+Render'ın ücretsiz planında disk sıfırlanır (her deploy'da ChromaDB silinir). Çözümler:
+
+Çözüm	Maliyet
+Render Persistent Disk	Aylık ~$0.25/GB
+Her başlangıçta Drive'dan tekrar indexle	Ücretsiz ama başlangıç yavaş
+Bulut vektör DB (Pinecone/Qdrant)	Free tier var
+→ En pratik: Uygulama her başlatıldığında Drive klasöründen otomatik indexleme → bedava ve basit.
+
+3. Hasta Erişimi
+Hastalar sadece soru sorabilir (dosya yükleme yok)
+İsteğe bağlı: basit şifre koruması veya link ile erişim
+📋 Yapılacaklar Özeti
+Google Cloud Service Account oluştur
+Drive klasöründeki dosyaları otomatik çeken endpoint ekle
+Uygulama açılışında otomatik sync
+Hasta modu (sadece sorgu, upload gizli)
+GitHub'a push + Render deploy
+Ne dersin, bu yaklaşım sana uyar mı? Özellikle:
+
+Service Account yöntemi tamam mı?
+Her başlangıçta yeniden indexleme kabul edilebilir mi, yoksa kalıcı depolama mı tercih edersin?
+Hastalar için şifre/erişim kontrolü istiyor musun?
