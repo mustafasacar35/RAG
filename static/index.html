@@ -38,7 +38,8 @@
       background: var(--bg);
       color: var(--text);
       font-family: var(--sans);
-      min-height: 100vh;
+      height: 100vh;
+      overflow: hidden;
       display: grid;
       grid-template-columns: 360px 1fr;
       grid-template-rows: 54px 1fr
@@ -994,6 +995,94 @@
       outline: none
     }
 
+    /* ── FOLDERS & ACCORDION ── */
+    .folder {
+      margin-bottom: 8px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .folder summary {
+      padding: 8px 10px;
+      background: var(--surface2);
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: bold;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      user-select: none;
+      border-bottom: 1px solid transparent;
+    }
+
+    .folder[open] summary {
+      border-bottom-color: var(--border);
+    }
+
+    .folder-actions {
+      margin-left: auto;
+      display: flex;
+      gap: 4px;
+    }
+
+    .folder-actions button {
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 10px;
+      opacity: 0.5;
+    }
+
+    .folder-actions button:hover {
+      opacity: 1;
+    }
+
+    .folder-content {
+      padding: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      background: var(--bg);
+    }
+
+    .doc-item {
+      position: relative;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 6px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .doc-move-btn {
+      background: none;
+      border: none;
+      font-size: 10px;
+      cursor: pointer;
+      padding: 2px;
+      opacity: 0.4;
+      margin-left: auto;
+    }
+
+    .doc-move-btn:hover {
+      opacity: 1;
+    }
+
+    .move-select {
+      font-family: var(--mono);
+      font-size: 9px;
+      padding: 2px;
+      border: 1px solid var(--accent);
+      border-radius: 3px;
+      outline: none;
+    }
+
+
     /* ── SOURCE POPUP ── */
     .popup-overlay {
       position: fixed;
@@ -1268,16 +1357,16 @@
     </div>
 
     <!-- BELGELER -->
-    <div class="sec" style="flex:1">
+    <div class="sec" style="flex:1; overflow-y:auto;">
       <div class="sec-label">
-        Belgeler
+        Projeler / Klasörler
         <div style="display:flex;gap:4px">
-          <button class="btn btn-outline" style="font-size:8px;padding:2px 7px" onclick="toggleAllDocs()"
-            title="Hepsini seç/kaldır">☑</button>
-          <button class="btn btn-danger" style="font-size:8px;padding:2px 7px" onclick="clearDocs()">Temizle</button>
+          <button class="btn btn-outline" style="font-size:8px;padding:2px 7px" onclick="createFolder()"
+            title="Yeni Klasör">📁 Yeni</button>
+          <button class="btn btn-danger" style="font-size:8px;padding:2px 7px" onclick="clearDocs()">Tümünü Sil</button>
         </div>
       </div>
-      <div class="docs-list" id="docsList">
+      <div class="folders-list" id="docsList">
         <div class="empty-docs">Henüz belge yok</div>
       </div>
     </div>
@@ -1650,40 +1739,142 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
       return tags ? `<div class="sources">${tags}</div>` : '';
     }
 
-    // ── Documents ──────────────────────────────────────────────────────────────
-    let docList = []; // [{name, chunks, type}]
-    let lastChunkDetails = []; // Son sorgunun chunk detayları
+    // ── Folders & Documents ───────────────────────────────────────────────────
+    let docList = []; // flat array of docs for getSelectedSources
 
     async function loadDocs() {
       try {
-        const res = await fetch('/documents');
+        const res = await fetch('/folders');
         const d = await res.json();
         document.getElementById('chunkCount').textContent = d.total_chunks ? d.total_chunks + ' parça' : '';
         const list = document.getElementById('docsList');
-        docList = d.documents || [];
-        if (!docList.length) { list.innerHTML = '<div class="empty-docs">Henüz belge yok</div>'; return; }
-        list.innerHTML = docList.map((doc, idx) => {
-          const icon = doc.name.startsWith('▶') ? '▶️'
-            : doc.type === 'web' || doc.name.startsWith('🌐') ? '🌐'
-              : doc.name.startsWith('📁') ? '📁'
-                : doc.name.endsWith('.pdf') ? '📄'
-                  : doc.name.endsWith('.epub') ? '📗'
-                    : doc.name.endsWith('.docx') ? '📝' : '📃';
-          const label = doc.name.length > 28 ? doc.name.slice(0, 26) + '…' : doc.name;
-          return `<div class="doc-item">
-          <input type="checkbox" class="doc-check" checked data-source="${esc(doc.name)}" id="dc${idx}">
-          <span class="doc-icon">${icon}</span>
-          <span class="doc-name" title="${esc(doc.name)}" id="dn${idx}">${esc(label)}</span>
-          <span class="doc-chunks">${doc.chunks}p</span>
-          <button class="doc-rename-btn" onclick="renameDoc('${esc(doc.name)}', ${idx})" title="İsim değiştir">✏️</button>
-        </div>`;
-        }).join('');
+        const folders = d.folders || [];
+
+        docList = [];
+
+        if (!folders.length) { list.innerHTML = '<div class="empty-docs">Henüz belge yok</div>'; return; }
+
+        let html = '';
+        folders.forEach(f => {
+          const docCount = f.doc_details ? f.doc_details.length : 0;
+          let innerHtml = '';
+
+          if (docCount === 0) {
+            innerHtml = '<div class="empty-docs" style="font-size:9px">Boş klasör</div>';
+          } else {
+            innerHtml = f.doc_details.map((doc, dIdx) => {
+              docList.push(doc); // push to flat array
+              const idx = docList.length - 1;
+              const icon = doc.name.startsWith('▶') ? '▶️'
+                : doc.type === 'web' || doc.name.startsWith('🌐') ? '🌐'
+                  : doc.name.startsWith('📁') ? '📁'
+                    : doc.name.endsWith('.pdf') ? '📄'
+                      : doc.name.endsWith('.epub') ? '📗'
+                        : doc.name.endsWith('.docx') ? '📝' : '📃';
+              const label = doc.name.length > 22 ? doc.name.slice(0, 20) + '…' : doc.name;
+
+              // Folder Options HTML için
+              const folderOptions = folders.map(fOpt => {
+                const isSelected = fOpt.id === f.id ? 'selected' : '';
+                return `<option value="${fOpt.id}" ${isSelected}>${esc(fOpt.name)}</option>`;
+              }).join('');
+
+              return `<div class="doc-item">
+                 <input type="checkbox" class="doc-check fcheck-${f.id}" checked data-source="${esc(doc.name)}" id="dc${idx}">
+                 <span class="doc-icon">${icon}</span>
+                 <span class="doc-name" title="${esc(doc.name)}" id="dn${idx}">${esc(label)}</span>
+                 <span class="doc-chunks">${doc.chunks}p</span>
+                 
+                 <div style="margin-left:auto; display:flex; gap:6px; align-items:center;">
+                   <select class="move-select" onchange="moveDocSelect('${esc(doc.name)}', this.value)" title="Başka klasöre taşı">
+                     ${folderOptions}
+                   </select>
+                   <button class="doc-move-btn" onclick="renameDoc('${esc(doc.name)}', ${idx})" title="İsmi Değiştir">✏️</button>
+                 </div>
+               </div>`;
+            }).join('');
+          }
+
+          const isDefault = f.id === 'f_default';
+          const renameBtn = isDefault ? '' : `<button onclick="renameFolder('${f.id}', '${esc(f.name)}')">✏️</button>`;
+          const delBtn = isDefault ? '' : `<button onclick="deleteFolder('${f.id}')">🗑️</button>`;
+
+          html += `
+          <details class="folder" open>
+            <summary>
+              <input type="checkbox" checked title="Tüm klasörü seç/kaldır" onclick="toggleFolderDocs('${f.id}', this)">
+              📁 <span>${esc(f.name)} (${docCount})</span>
+              <div class="folder-actions">
+                ${renameBtn}
+                ${delBtn}
+              </div>
+            </summary>
+            <div class="folder-content">
+              ${innerHtml}
+            </div>
+          </details>`;
+        });
+
+        list.innerHTML = html;
       } catch (e) { }
+    }
+
+    // Klasör Yönetimi
+    async function createFolder() {
+      const name = prompt("Yeni klasör adı:");
+      if (!name || !name.trim()) return;
+      const fd = new FormData(); fd.append('name', name);
+      try {
+        const res = await fetch('/create-folder', { method: 'POST', body: fd });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.detail);
+        toast(d.message, 's'); loadDocs();
+      } catch (e) { toast(e.message, 'e'); }
+    }
+
+    async function renameFolder(id, oldName) {
+      const newName = prompt("Yeni klasör adı:", oldName);
+      if (!newName || !newName.trim() || newName === oldName) return;
+      const fd = new FormData(); fd.append('folder_id', id); fd.append('new_name', newName);
+      try {
+        const res = await fetch('/rename-folder', { method: 'POST', body: fd });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.detail);
+        toast(d.message, 's'); loadDocs();
+      } catch (e) { toast(e.message, 'e'); }
+    }
+
+    async function deleteFolder(id) {
+      if (!confirm("Bu klasör silinsin mi? (İçindeki belgeler 'Diğer Belgeler' altına taşınacak)")) return;
+      try {
+        const res = await fetch(`/folder/${id}`, { method: 'DELETE' });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.detail);
+        toast(d.message, 's'); loadDocs();
+      } catch (e) { toast(e.message, 'e'); }
+    }
+
+    async function moveDocSelect(docName, targetId) {
+      if (!targetId) return;
+      const fd = new FormData(); fd.append('doc_name', docName); fd.append('target_folder_id', targetId);
+      try {
+        const res = await fetch('/move-doc', { method: 'POST', body: fd });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.detail);
+        toast(d.message, 's'); loadDocs();
+      } catch (e) { toast(e.message, 'e'); }
+    }
+
+    function toggleFolderDocs(folderId, cb) {
+      const checks = document.querySelectorAll(`.fcheck-${folderId}`);
+      checks.forEach(c => c.checked = cb.checked);
+      // summary click'ini durdur ki accordion açılıp kapanmasın
+      event.stopPropagation();
     }
 
     function getSelectedSources() {
       const checks = document.querySelectorAll('.doc-check:checked');
-      if (checks.length === 0 || checks.length === docList.length) return ''; // hepsi seçili = filtre yok
+      if (checks.length === 0 || checks.length === docList.length) return '';
       return Array.from(checks).map(c => c.dataset.source).join('||||');
     }
 
@@ -1691,6 +1882,8 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
       const checks = document.querySelectorAll('.doc-check');
       const allChecked = Array.from(checks).every(c => c.checked);
       checks.forEach(c => c.checked = !allChecked);
+      // klasör checkboxlarını da senkronize etsek iyi olur
+      document.querySelectorAll('.folder summary input[type=checkbox]').forEach(c => c.checked = !allChecked);
     }
 
     async function renameDoc(oldName, idx) {

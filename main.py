@@ -845,16 +845,116 @@ async def query(
 async def get_history():
     return load_history()
 
-# ── Documents ────────────────────────────────────────────────────────────────
+# ── Documents & Folders ──────────────────────────────────────────────────────
 
-@app.get("/documents")
-async def list_documents():
+FOLDERS_FILE = "folders.json"
+
+def load_folders() -> list[dict]:
+    if os.path.exists(FOLDERS_FILE):
+        try:
+            with open(FOLDERS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    # Varsayılan yapı
+    return [{"id": "f_default", "name": "Diğer Belgeler", "docs": []}]
+
+def save_folders(data: list[dict]):
+    with open(FOLDERS_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+@app.get("/folders")
+async def get_folders():
+    folders = load_folders()
+    # Mevcut belgeleri topla
     if collection.count() == 0:
-        return {"documents": [], "total_chunks": 0}
+        return {"folders": folders, "total_chunks": 0}
+    
     items = collection.get(include=["metadatas"])
     srcs: dict[str, dict] = {}
     for m in items["metadatas"]:
         s = m["source"]
+        if s not in srcs:
+            srcs[s] = {"name": s, "chunks": 0, "type": m.get("type","file")}
+        srcs[s]["chunks"] += 1
+    
+    all_docs = list(srcs.values())
+    
+    # Hangi belge hangi klasörde bulalım
+    assigned_docs = set()
+    for f in folders:
+        # Sadece yüklenmiş belgeleri klasörde göster
+        f["doc_details"] = [doc for doc in all_docs if doc["name"] in f.get("docs", [])]
+        assigned_docs.update(f.get("docs", []))
+    
+    # Hiçbir klasöre atanmamış belgeleri "Diğer Belgeler" (f_default) içine ekle
+    unassigned = [doc for doc in all_docs if doc["name"] not in assigned_docs]
+    for f in folders:
+        if f["id"] == "f_default":
+            f["doc_details"].extend(unassigned)
+            break
+
+    return {"folders": folders, "total_chunks": collection.count()}
+
+@app.post("/create-folder")
+async def create_folder(name: str = Form(...)):
+    name = name.strip()
+    if not name: raise HTTPException(400, "Klasör ismi boş olamaz")
+    folders = load_folders()
+    folders.append({
+        "id": f"f_{str(uuid.uuid4())[:8]}",
+        "name": name,
+        "docs": []
+    })
+    save_folders(folders)
+    return {"message": f"📁 '{name}' oluşturuldu"}
+
+@app.post("/rename-folder")
+async def rename_folder(folder_id: str = Form(...), new_name: str = Form(...)):
+    if folder_id == "f_default": raise HTTPException(400, "Varsayılan klasör adı değiştirilemez")
+    new_name = new_name.strip()
+    if not new_name: raise HTTPException(400, "Yeni isim boş olamaz")
+    folders = load_folders()
+    for f in folders:
+        if f["id"] == folder_id:
+            f["name"] = new_name
+            save_folders(folders)
+            return {"message": "✅ Klasör adı güncellendi"}
+    raise HTTPException(404, "Klasör bulunamadı")
+
+@app.delete("/folder/{folder_id}")
+async def delete_folder(folder_id: str):
+    if folder_id == "f_default": raise HTTPException(400, "Varsayılan klasör silinemez")
+    folders = load_folders()
+    new_folders = [f for f in folders if f["id"] != folder_id]
+    if len(folders) == len(new_folders):
+        raise HTTPException(404, "Klasör bulunamadı")
+    save_folders(new_folders)
+    return {"message": "🗑️ Klasör silindi. İçindeki belgeler 'Diğer Belgeler'e aktarıldı."}
+
+@app.post("/move-doc")
+async def move_doc(doc_name: str = Form(...), target_folder_id: str = Form(...)):
+    folders = load_folders()
+    # Önce belgeyi bulunduğu tüm klasörlerden çıkar
+    for f in folders:
+        if doc_name in f.get("docs", []):
+            f["docs"].remove(doc_name)
+    
+    # Şimdi hedefe ekle (f_default ise hiçbir yere eklemeyiz, dinamik olarak oraya düşer)
+    if target_folder_id != "f_default":
+        for f in folders:
+            if f["id"] == target_folder_id:
+                if "docs" not in f: f["docs"] = []
+                if doc_name not in f["docs"]:
+                    f["docs"].append(doc_name)
+                break
+    
+    save_folders(folders)
+    return {"message": f"✅ Belge taşındı"}
+
+# ── Documents (Eski uç nokta - geriye dönük uyumluluk için korundu) ─────────
+
+@app.get("/documents")
         if s not in srcs:
             srcs[s] = {"name": s, "chunks": 0, "type": m.get("type","file")}
         srcs[s]["chunks"] += 1
@@ -876,6 +976,14 @@ async def rename_document(
             ids_to_update.append(items["ids"][idx])
             m["source"] = new_name
             metas_to_update.append(m)
+    # Belgeler isimlendirilirken folders.json içindeki referansı da güncelleyelim
+    folders = load_folders()
+    for f in folders:
+        if old_name in f.get("docs", []):
+            f["docs"].remove(old_name)
+            f["docs"].append(new_name)
+    save_folders(folders)
+
     if not ids_to_update:
         raise HTTPException(404, f"'{old_name}' bulunamadı")
     collection.update(ids=ids_to_update, metadatas=metas_to_update)
@@ -887,6 +995,9 @@ async def clear_all():
     global collection
     collection = chroma_client.get_or_create_collection(
         name="documents", metadata={"hnsw:space": "cosine"})
+    # Klasörleri de sıfırla
+    save_folders([{"id": "f_default", "name": "Diğer Belgeler", "docs": []}])
+    
     return {"message": "Tüm belgeler silindi"}
 
 # ── Google Drive Sync ────────────────────────────────────────────────────────
