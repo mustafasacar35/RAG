@@ -208,7 +208,7 @@
     .tabs {
       display: flex;
       gap: 2px;
-      margin-bottom: 12px
+      margin-bottom: 6px
     }
 
     .tab {
@@ -246,7 +246,7 @@
     .drop-zone {
       border: 1.5px dashed var(--border);
       border-radius: 5px;
-      padding: 14px;
+      padding: 8px;
       text-align: center;
       cursor: pointer;
       transition: all .2s;
@@ -1419,15 +1419,14 @@
   <aside class="sidebar">
 
     <!-- KAYNAK EKLE -->
+    <!-- AYARLAR -->
     <div class="sec">
-      <div class="sec-label">Gemini API Key</div>
-      <div class="row">
-        <input type="password" id="apiKey" placeholder="AIza..." autocomplete="off">
-        <button class="btn btn-y" onclick="saveKey()">OK</button>
-      </div>
-      <div style="margin-top:5px;font-family:var(--mono);font-size:9px;color:var(--muted)">
-        <a href="https://aistudio.google.com/app/apikey" target="_blank"
-          style="color:var(--blue)">aistudio.google.com</a> → ücretsiz key
+      <div class="sec-label">Arama Ayarları</div>
+      <div class="topk-row">
+        <label>Kaynak sayısı (top-k)</label>
+        <input type="range" min="1" max="10" value="5" id="topK"
+          oninput="document.getElementById('topKVal').textContent=this.value">
+        <div class="topk-val" id="topKVal">5</div>
       </div>
     </div>
 
@@ -1552,30 +1551,6 @@
   </main>
 
   <aside class="right-sidebar">
-    <!-- GEÇMİŞ -->
-    <div class="sec">
-      <div class="sec-label">Geçmiş Sorular</div>
-      <div class="history-list" id="histList">
-        <div class="empty-docs">Geçmiş yok</div>
-      </div>
-      <div class="hist-pagination" id="histPagination"></div>
-    </div>
-
-    <!-- SYSTEM PROMPT -->
-    <div class="sec" style="flex:1">
-      <div class="sec-label">System Prompt</div>
-      <textarea id="sysPrompt" style="height:100%">Sen deneyimli bir sağlık danışmanısın. Sana verilen kaynak belgelerden yararlanarak soruları yanıtla.
-Yanıtlarını YALNIZCA sağlanan kaynaklara dayandır. Kaynaklarda bilgi yoksa bunu belirt.
-Türkçe sorulara Türkçe, İngilizce sorulara İngilizce yanıt ver.
-
-KESİN format KURALLARI (bunlara kesinlikle uy, ihlal etme):
-1. Asla yıldız karakteri kullanma. Hiçbir kelimeyi yıldızlarla çevreleme.
-2. Asla markdown formatı kullanma.
-3. Asla liste yapma. Her şeyi düz paragraflar halinde yaz.
-4. Bir doktorla sohbet eder gibi doğal ve samimi bir üslup kullan.
-5. Kalın, italik veya metin vurgulaması yapma.</textarea>
-    </div>
-
     <!-- API KEY -->
     <div class="sec">
       <div class="sec-label">Gemini API Key</div>
@@ -1588,7 +1563,46 @@ KESİN format KURALLARI (bunlara kesinlikle uy, ihlal etme):
           style="color:var(--blue)">aistudio.google.com</a> → ücretsiz key
       </div>
     </div>
+
+    <!-- SYSTEM PROMPT BUTTON -->
+    <div class="sec">
+      <div class="sec-label">Sistem Ayarları</div>
+      <button class="btn btn-outline btn-full" onclick="showPromptModal()">⚙️ Sistem Promptunu Düzenle</button>
+    </div>
+
+    <!-- GEÇMİŞ -->
+    <div class="sec" style="flex:1; display:flex; flex-direction:column;">
+      <div class="sec-label">Geçmiş Sorular</div>
+      <div class="history-list" id="histList" style="flex:1; max-height:none;">
+        <div class="empty-docs">Geçmiş yok</div>
+      </div>
+      <div class="hist-pagination" id="histPagination"></div>
+    </div>
   </aside>
+
+  <!-- PROMPT MODAL -->
+  <div class="ebook-overlay" id="promptOverlay" style="z-index: 2000;">
+    <div class="ebook-box" style="width: 500px; height: auto;">
+      <div class="ebook-header">
+        <span>⚙️ Sistem Promptu</span>
+        <button class="ebook-close" onclick="closePromptModal()">✕</button>
+      </div>
+      <div style="padding: 18px;">
+        <textarea id="sysPrompt" style="height:250px">Sen deneyimli bir sağlık danışmanısın. Sana verilen kaynak belgelerden yararlanarak soruları yanıtla.
+Yanıtlarını YALNIZCA sağlanan kaynaklara dayandır. Kaynaklarda bilgi yoksa bunu belirt.
+Türkçe sorulara Türkçe, İngilizce sorulara İngilizce yanıt ver.
+
+KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
+1. Asla yıldız karakteri kullanma. Hiçbir kelimeyi yıldızlarla çevreleme.
+2. Asla markdown formatı kullanma.
+3. Asla liste yapma. Her şeyi düz paragraflar halinde yaz.
+4. Bir doktorla sohbet eder gibi doğal ve samimi bir üslup kullan.
+5. Kalın, italik veya metin vurgulaması yapma.</textarea>
+        <button class="btn btn-b btn-full" style="margin-top:10px"
+          onclick="closePromptModal(); toast('Prompt kaydedildi', 's')">Kaydet</button>
+      </div>
+    </div>
+  </div>
 
   <div id="toast"></div>
 
@@ -2423,6 +2437,14 @@ KESİN format KURALLARI (bunlara kesinlikle uy, ihlal etme):
     // Load Drive status on page load
     loadDriveStatus();
     if (apiKey) { loadHistory(); }
+
+    // ── PROMPT MODAL ─────────────────────────────────────────────────────────
+    function showPromptModal() {
+      document.getElementById('promptOverlay').style.display = 'flex';
+    }
+    function closePromptModal() {
+      document.getElementById('promptOverlay').style.display = 'none';
+    }
   </script>
 </body>
 
