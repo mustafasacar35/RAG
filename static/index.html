@@ -1465,6 +1465,10 @@
 
       <!-- DOSYA -->
       <div class="tab-pane active" id="tab-file">
+        <select id="uploadFolderSelect" class="move-select"
+          style="width:100%; margin-bottom:6px; padding:6px; font-size:10px; background:var(--surface2); color:var(--text); border-color:var(--border);">
+          <option value="f_default">📁 Diğer Belgeler (Varsayılan)</option>
+        </select>
         <div class="drop-zone" id="dz">
           <input type="file" id="fileInput" accept=".pdf,.txt,.md,.docx,.epub" multiple
             onchange="handleFiles(this.files)">
@@ -1697,9 +1701,9 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
       setTimeout(() => t.className = '', 4500);
     }
 
-    // ── File Upload ────────────────────────────────────────────────────────────
     async function handleFiles(files) {
       if (!apiKey) return toast('Önce API key!', 'e');
+      const folderId = document.getElementById('uploadFolderSelect')?.value || "f_default";
       const prog = document.getElementById('upProg');
       prog.style.display = 'block';
       for (const f of files) {
@@ -1707,6 +1711,7 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
         if (mb > 15) { toast(`"${f.name}" çok büyük (${mb.toFixed(1)} MB)`, 'w'); continue; }
         prog.textContent = `Yükleniyor: ${f.name} (${mb.toFixed(1)} MB)...`;
         const fd = new FormData(); fd.append('file', f);
+        fd.append('folder_id', folderId);
         try {
           const res = await fetch('/upload', { method: 'POST', body: fd });
           const d = await res.json();
@@ -2087,6 +2092,14 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
         const list = document.getElementById('docsList');
         const folders = d.folders || [];
 
+        // Populate Upload Dropdown
+        const upSel = document.getElementById('uploadFolderSelect');
+        if (upSel) {
+          upSel.innerHTML = folders.map(f => {
+            return `<option value="${f.id}" ${f.id === 'f_default' ? 'selected' : ''}>${f.id === 'f_default' ? '📁' : '📂'} ${esc(f.name)}</option>`;
+          }).join('');
+        }
+
         docList = [];
 
         if (!folders.length) { list.innerHTML = '<div class="empty-docs">Henüz belge yok</div>'; return; }
@@ -2279,8 +2292,13 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
         const d = await res.json();
         if (!res.ok) throw new Error(d.detail);
 
-        let txt = d.toc.replace(/\\*\\*(.*?)\\*\\*/g, '<b>$1</b>');
-        txt = txt.replace(/\\*(.*?)\\*/g, '<i>$1</i>');
+        let txt = d.toc;
+        txt = txt.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
+        txt = txt.replace(/\*([^\n*]+)\*/g, '<i>$1</i>');
+        txt = txt.replace(/^\* /gm, '• ');
+        txt = txt.replace(/^- /gm, '• ');
+        txt = txt.replace(/\n/g, '<br>');
+
         summaryArea.innerHTML = `<div style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border)"><b>📑 İçindekiler</b><br><br>${txt}</div>` + summaryArea.innerHTML;
         btnElement.style.display = 'none';
       } catch (e) {

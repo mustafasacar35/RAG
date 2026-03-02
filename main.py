@@ -405,22 +405,30 @@ def yt_video_id(url: str) -> Optional[str]:
     return None
 
 def fetch_yt(vid: str) -> tuple[str, str]:
+    import subprocess
+    import sys
     try:
-        tl = YouTubeTranscriptApi.list_transcripts(vid)
-        try: t = tl.find_manually_created_transcript(["tr", "en"])
-        except Exception:
-            try: t = tl.find_generated_transcript(["tr", "en"])
-            except Exception: t = next(iter(tl))
-        tr = t.fetch()
-    except Exception:
-        try:
-            tr = YouTubeTranscriptApi.get_transcript(vid, languages=['tr', 'en'])
-        except Exception:
-            try:
-                tr = YouTubeTranscriptApi.get_transcript(vid)
-            except Exception as e:
-                raise ValueError("Altyazı bulunamadı veya kapalı.") from e
-    text = re.sub(r"\s+", " ", re.sub(r"\[.*?\]", "", " ".join(e["text"] for e in tr))).strip()
+        cmd = [sys.executable, "-m", "youtube_transcript_api", vid, "--format", "json"]
+        
+        # Windows'ta konsol penceresi açılmaması için
+        kwargs = {}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+            
+        res = subprocess.run(cmd, capture_output=True, text=True, check=True, **kwargs)
+        data = json.loads(res.stdout)
+        
+        if isinstance(data, list) and len(data) > 0 and isinstance(data[0], list):
+            items = data[0]
+        else:
+            items = data
+            
+        text = " ".join([i.get("text", "") for i in items])
+        text = re.sub(r"\s+", " ", re.sub(r"\[.*?\]", "", text)).strip()
+        
+    except Exception as e:
+        raise ValueError("Altyazı bulunamadı veya kapalı. Lütfen videoda otomatik çeviri veya altyazı olduğuna emin olun.") from e
+
     try:
         r = requests.get(f"https://www.youtube.com/watch?v={vid}",
                          headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
@@ -657,7 +665,11 @@ async def serve_ui():
 # ── File upload ──────────────────────────────────────────────────────────────
 
 @app.post("/upload")
-async def upload_file(file: UploadFile = File(...), x_api_key: Optional[str] = Header(None)):
+async def upload_file(
+    file: UploadFile = File(...),
+    folder_id: Optional[str] = Form(None),
+    x_api_key: Optional[str] = Header(None)
+):
     api_key = get_api_key(x_api_key)
     if not api_key: raise HTTPException(400, "GEMINI_API_KEY ayarlanmamış")
 
@@ -684,6 +696,17 @@ async def upload_file(file: UploadFile = File(...), x_api_key: Optional[str] = H
 
     chunks = chunk_text(text)
     await index_chunks(chunks, filename, {"type": "file", "size_mb": round(size_mb, 2)}, api_key)
+
+    # Klasöre ekleme mantığı
+    if folder_id and folder_id != "f_default":
+        folders = load_folders()
+        for f in folders:
+            if f["id"] == folder_id:
+                if filename not in f.get("docs", []):
+                    f.setdefault("docs", []).append(filename)
+                    save_folders(folders)
+                break
+
     return {"message": f"✅ '{filename}' yüklendi ({len(chunks)} parça · {size_mb:.1f} MB)"}
 
 # ── Single URL ───────────────────────────────────────────────────────────────
