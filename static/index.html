@@ -231,7 +231,7 @@
       font-size: 9px;
       letter-spacing: 1px;
       text-transform: uppercase;
-      padding: 6px 4px;
+      padding: 4px 2px;
       border: 1px solid var(--border);
       border-radius: 3px;
       background: transparent;
@@ -519,6 +519,11 @@
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap
+    }
+
+    .doc-name:hover {
+      white-space: normal;
+      word-break: break-all;
     }
 
     .doc-chunks {
@@ -1028,7 +1033,8 @@
 
     .folder summary {
       padding: 8px 10px;
-      background: var(--surface2);
+      background: var(--bg);
+      color: var(--text);
       font-family: var(--mono);
       font-size: 11px;
       font-weight: bold;
@@ -1038,9 +1044,12 @@
       gap: 6px;
       user-select: none;
       border-bottom: 1px solid transparent;
+      transition: all 0.2s;
     }
 
-    .folder[open] summary {
+    .folder[open]>summary {
+      background: var(--surface2);
+      color: var(--accent);
       border-bottom-color: var(--border);
     }
 
@@ -1599,7 +1608,7 @@
   </aside>
 
   <!-- PROMPT MODAL -->
-  <div class="ebook-overlay" id="promptOverlay" style="z-index: 2000;">
+  <div class="ebook-overlay" id="promptOverlay" style="z-index: 2000; display: none;">
     <div class="ebook-box" style="width: 500px; height: auto;">
       <div class="ebook-header">
         <span>⚙️ Sistem Promptu</span>
@@ -2099,7 +2108,7 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
                     : doc.name.endsWith('.pdf') ? '📄'
                       : doc.name.endsWith('.epub') ? '📗'
                         : doc.name.endsWith('.docx') ? '📝' : '📃';
-              const label = doc.name.length > 22 ? doc.name.slice(0, 20) + '…' : doc.name;
+              const label = doc.name;
 
               // Folder Options HTML için
               const folderOptions = folders.map(fOpt => {
