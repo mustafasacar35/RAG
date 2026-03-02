@@ -1124,6 +1124,35 @@
       background: rgba(71, 184, 255, .25);
       transform: scale(1.05)
     }
+
+    /* ── HISTORY ── */
+    .history-list {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      margin-top: 8px;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+
+    .hist-item {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--text);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      padding: 6px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      transition: border-color .2s;
+    }
+
+    .hist-item:hover {
+      border-color: var(--accent);
+    }
   </style>
 </head>
 
@@ -1253,6 +1282,14 @@
       </div>
     </div>
 
+    <!-- GEÇMİŞ -->
+    <div class="sec">
+      <div class="sec-label">Geçmiş Sorular</div>
+      <div class="history-list" id="histList">
+        <div class="empty-docs">Geçmiş yok</div>
+      </div>
+    </div>
+
     <!-- SYSTEM PROMPT -->
     <div class="sec">
       <div class="sec-label">System Prompt</div>
@@ -1315,7 +1352,7 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
       if (!apiKey) return toast('API key boş!', 'e');
       localStorage.setItem('g_key', apiKey);
       document.getElementById('apiKey').classList.add('saved');
-      toast('API Key kaydedildi ✓', 's'); loadDocs();
+      toast('API Key kaydedildi ✓', 's'); loadDocs(); loadHistory();
     }
 
     function switchTab(n) {
@@ -1526,6 +1563,93 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
       toast('Tarama durduruldu', 's'); loadDocs();
     }
 
+    // ── History ────────────────────────────────────────────────────────────────
+    let chatHistory = [];
+    async function loadHistory() {
+      try {
+        const res = await fetch('/history');
+        const data = await res.json();
+        chatHistory = data;
+        const list = document.getElementById('histList');
+        if (!data.length) { list.innerHTML = '<div class="empty-docs">Geçmiş yok</div>'; return; }
+        list.innerHTML = data.map(h =>
+          `<div class="hist-item" onclick="loadHistoryItem('${h.id}')" title="${esc(h.question)}">${esc(h.question)}</div>`
+        ).join('');
+      } catch (e) { }
+    }
+
+    function loadHistoryItem(id) {
+      const item = chatHistory.find(h => h.id === id);
+      if (!item) return;
+      document.getElementById('welcome')?.remove();
+      const chat = document.getElementById('chatArea');
+      chat.insertAdjacentHTML('beforeend',
+        `<div class="msg msg-user"><div class="bubble">${esc(item.question)}</div></div>`);
+
+      lastChunkDetails = item.chunk_details || [];
+      const sourcesHtml = getSourcesHtml(item.chunk_details);
+
+      let answerFormatted = formatCitations(esc(item.answer));
+      chat.insertAdjacentHTML('beforeend',
+        `<div class="msg msg-ai">
+           <div class="bubble">${answerFormatted}</div>
+           ${sourcesHtml}
+         </div>`);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    function formatCitations(text) {
+      return text.replace(/\[(\d+)\]/g, (match, p1) => {
+        return `<span class="stag" style="padding:1px 5px;margin:0 2px" onclick="showSourcePopupId('${p1}')">[${p1}]</span>`;
+      });
+    }
+
+    function showSourcePopupId(chunkIdStr) {
+      const chunkId = parseInt(chunkIdStr);
+      const c = lastChunkDetails.find(x => x.id === chunkId);
+      if (!c) { toast('Kaynak detayı bulunamadı (ID: ' + chunkId + ')', 'w'); return; }
+
+      const overlay = document.createElement('div');
+      overlay.className = 'popup-overlay';
+      overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+
+      const scoreHtml = c.score !== null ? `<span class="popup-chunk-score">Skor: ${c.score}</span>` : '';
+      const chunkHtml = `<div class="popup-chunk" style="border-left-color:var(--accent); background:rgba(255, 235, 59, 0.15)">
+          ${scoreHtml}
+          <div class="popup-chunk-source">${esc(c.source)}</div>
+          <mark style="background:rgba(255, 235, 59, 0.4);color:inherit;padding:2px;border-radius:3px">${esc(c.text)}</mark>
+        </div>`;
+
+      overlay.innerHTML = `<div class="popup-box">
+        <div class="popup-header">
+          <h3>📖 Kaynak [${chunkId}] - ${esc(c.source)}</h3>
+          <button class="popup-close" onclick="this.closest('.popup-overlay').remove()">✕</button>
+        </div>
+        <div class="popup-body">${chunkHtml}</div>
+      </div>`;
+
+      document.body.appendChild(overlay);
+    }
+
+    function getSourcesHtml(chunkDetails) {
+      if (!chunkDetails || !chunkDetails.length) return '';
+      // Sadece unique source'ları listele (popup id olmadan string listesi olarak ya da idleriyle)
+      const uniqueSources = [];
+      const seen = new Set();
+      chunkDetails.forEach(c => {
+        if (!seen.has(c.source)) {
+          seen.add(c.source);
+          uniqueSources.push(c.source);
+        }
+      });
+      const tags = uniqueSources.map(s => {
+        const lbl = s.startsWith('http') ? '🌐 ' + new URL(s).hostname : s;
+        // Kaynak etiketine tıklayınca, o source'a ait chunkları gösteren eski fonksiyon kullanılsın
+        return `<span class="stag" onclick="showSourcePopup('${s.replace(/'/g, "\\'")}')">${esc(lbl)}</span>`;
+      }).join('');
+      return tags ? `<div class="sources">${tags}</div>` : '';
+    }
+
     // ── Documents ──────────────────────────────────────────────────────────────
     let docList = []; // [{name, chunks, type}]
     let lastChunkDetails = []; // Son sorgunun chunk detayları
@@ -1669,15 +1793,15 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
         // Chunk detaylarını sakla (popup için)
         lastChunkDetails = d.chunk_details || [];
 
-        const tags = d.sources.map(s => {
-          const lbl = s.startsWith('http') ? '🌐 ' + new URL(s).hostname : s;
-          return `<span class="stag" onclick="showSourcePopup('${s.replace(/'/g, "\\'")}')">${esc(lbl)}</span>`;
-        }).join('');
+        const tags = getSourcesHtml(lastChunkDetails);
+        let answerFormatted = formatCitations(esc(d.answer));
+
         chat.insertAdjacentHTML('beforeend',
           `<div class="msg msg-ai">
-           <div class="bubble">${esc(d.answer)}</div>
-           ${tags ? `<div class="sources">${tags}</div>` : ''}
+           <div class="bubble">${answerFormatted}</div>
+           ${tags}
          </div>`);
+        loadHistory();
       } catch (e) {
         document.getElementById(tid)?.remove();
         chat.insertAdjacentHTML('beforeend',
@@ -1798,6 +1922,7 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
 
     // Load Drive status on page load
     loadDriveStatus();
+    if (apiKey) { loadHistory(); }
   </script>
 </body>
 

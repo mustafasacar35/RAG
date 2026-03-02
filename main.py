@@ -87,13 +87,15 @@ Yanıtlarını YALNIZCA sağlanan kaynaklara dayandır. Kaynaklarda bilgi yoksa 
 Türkçe sorulara Türkçe, İngilizce sorulara İngilizce yanıt ver.
 
 KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
-1. Asla yıldız karakteri kullanma. Ne tek yıldız ne çift yıldız. Hiçbir kelimeyi yıldızlarla çevreleme.
-2. Asla markdown formatı kullanma. Başlık için # işareti koyma.
-3. Asla numaralı veya madde işaretli liste yapma.
-4. Asla tire (-) veya nokta (•) ile başlayan satırlar oluşturma.
-5. Her şeyi düz paragraflar halinde yaz. Bilgileri akıcı cümlelerle birbirine bağla.
-6. Bir doktorla sohbet eder gibi doğal ve samimi bir üslup kullan.
-7. Kalın, italik veya herhangi bir metin vurgulaması yapma."""
+1. Yanıtlarında hangi bilgiyi hangi kaynaktan aldıysan cümlenin sonuna o kaynağın numarasını köşeli parantez içinde yaz. Örnek: "...olduğu bilinmektedir [1]." veya "...gösterilmiştir [2]."
+2. SADECE metin içinde atıf numarası kullan ([1], [2] vb.). En alta kaynaklar listesi EKLEME. 
+3. Asla yıldız karakteri kullanma. Ne tek yıldız ne çift yıldız. Hiçbir kelimeyi yıldızlarla çevreleme.
+4. Asla markdown formatı kullanma. Başlık için # işareti koyma.
+5. Asla numaralı veya madde işaretli liste yapma.
+6. Asla tire (-) veya nokta (•) ile başlayan satırlar oluşturma.
+7. Her şeyi düz paragraflar halinde yaz. Bilgileri akıcı cümlelerle birbirine bağla.
+8. Bir doktorla sohbet eder gibi doğal ve samimi bir üslup kullan.
+9. Kalın, italik veya herhangi bir metin vurgulaması yapma."""
 
 def strip_markdown(text: str) -> str:
     """AI yanıtından kalan markdown işaretlerini temizler."""
@@ -410,8 +412,14 @@ def fetch_yt(vid: str) -> tuple[str, str]:
             try: t = tl.find_generated_transcript(["tr", "en"])
             except Exception: t = next(iter(tl))
         tr = t.fetch()
-    except (TranscriptsDisabled, NoTranscriptFound):
-        tr = YouTubeTranscriptApi.get_transcript(vid)
+    except Exception:
+        try:
+            tr = YouTubeTranscriptApi.get_transcript(vid, languages=['tr', 'en'])
+        except Exception:
+            try:
+                tr = YouTubeTranscriptApi.get_transcript(vid)
+            except Exception as e:
+                raise ValueError("Altyazı bulunamadı veya kapalı.") from e
     text = re.sub(r"\s+", " ", re.sub(r"\[.*?\]", "", " ".join(e["text"] for e in tr))).strip()
     try:
         r = requests.get(f"https://www.youtube.com/watch?v={vid}",
@@ -745,6 +753,21 @@ async def crawl_stop(job_id: str):
     crawl_jobs[job_id]["force_stop"] = True
     return {"message": "Tarama durduruluyor..."}
 
+HISTORY_FILE = "history.json"
+
+def load_history() -> list:
+    if os.path.exists(HISTORY_FILE):
+        try:
+            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+def save_history(history: list):
+    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+        json.dump(history, f, ensure_ascii=False, indent=2)
+
 # ── Query ────────────────────────────────────────────────────────────────────
 
 @app.post("/query")
@@ -784,13 +807,14 @@ async def query(
     chunk_details = []
     for i, c in enumerate(chunks):
         chunk_details.append({
+            "id": i + 1,
             "text": c,
             "source": metas[i]["source"],
             "score": round(dists[i], 3) if i < len(dists) else None,
         })
 
     context = "\n\n---\n\n".join(
-        f"[Kaynak: {metas[i]['source']}]\n{c}" for i, c in enumerate(chunks))
+        f"[Kaynak {i+1}]: {c}" for i, c in enumerate(chunks))
     answer  = await gemini_chat(
         f"Aşağıdaki kaynaklardan yararlanarak soruyu yanıtla:\n\n{context}\n\nSoru: {question}",
         system_prompt, api_key)
@@ -798,12 +822,28 @@ async def query(
     # Markdown temizle
     answer = strip_markdown(answer)
 
+    # Geçmişe kaydet
+    history_item = {
+        "id": str(uuid.uuid4())[:8],
+        "question": question,
+        "answer": answer,
+        "timestamp": datetime.now().isoformat(),
+        "chunk_details": chunk_details
+    }
+    hist = load_history()
+    hist.insert(0, history_item) # En başa ekle
+    save_history(hist[:50]) # Son 50 soruyu tut
+
     return {
         "answer": answer,
         "sources": sources,
         "chunks_used": len(chunks),
         "chunk_details": chunk_details,
     }
+
+@app.get("/history")
+async def get_history():
+    return load_history()
 
 # ── Documents ────────────────────────────────────────────────────────────────
 
