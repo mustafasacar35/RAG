@@ -1083,6 +1083,40 @@ async def summarize_document(
     except Exception as e:
         raise HTTPException(500, f"Özet çıkarılırken hata oluştu: {str(e)}")
 
+@app.post("/toc-document")
+async def toc_document(
+    doc_name: str = Form(...),
+    x_api_key: Optional[str] = Header(None)
+):
+    """Belgenin içindekiler listesini (TOC) çıkarır."""
+    if not x_api_key and not GEMINI_API_KEY:
+        raise HTTPException(401, "API Key eksik")
+    api_key = x_api_key or GEMINI_API_KEY
+    
+    if collection.count() == 0:
+        raise HTTPException(404, "Koleksiyon boş")
+        
+    results = collection.get(
+        where={"source": doc_name},
+        include=["documents"]
+    )
+    docs = results.get("documents", [])
+    if not docs:
+        raise HTTPException(404, "Belge bulunamadı")
+        
+    full_text = "\n\n".join(docs)
+    max_chars = 100000 
+    truncated_text = full_text[:max_chars]
+    
+    prompt = f"Lütfen aşağıdaki belgenin sadece 'Ana Başlıkları' ve 'Alt Başlıklarını' hiyerarşik bir liste (İçindekiler / Table of Contents) formatında çıkar:\n\n{truncated_text}"
+    
+    try:
+        toc_text = await gemini_chat(prompt, "Sen bir akademik asistansın. Sadece başlıkları kullanarak hiyerarşik bir İçindekiler listesi oluştur. Madde işareti kullan, ekstra yorum yapma.", api_key)
+        return {"toc": toc_text}
+    except Exception as e:
+        raise HTTPException(500, f"İçindekiler çıkarılırken hata oluştu: {str(e)}")
+
+
 # ── Google Drive Sync ────────────────────────────────────────────────────────
 
 @app.post("/sync-drive")

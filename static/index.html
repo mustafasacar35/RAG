@@ -26,6 +26,8 @@
       --success: #40c057;
       --mono: 'Space Mono', monospace;
       --sans: 'Syne', sans-serif;
+      --left-w: 320px;
+      --right-w: 280px;
     }
 
     * {
@@ -41,8 +43,20 @@
       height: 100vh;
       overflow: hidden;
       display: grid;
-      grid-template-columns: 340px 1fr 300px;
+      grid-template-columns: var(--left-w) 4px 1fr 4px var(--right-w);
       grid-template-rows: 54px 1fr
+    }
+
+    .resizer {
+      background: var(--border);
+      cursor: col-resize;
+      transition: background 0.2s;
+      z-index: 10;
+    }
+
+    .resizer:hover,
+    .resizer.dragging {
+      background: var(--accent);
     }
 
     /* ── HEADER ── */
@@ -134,7 +148,7 @@
     }
 
     .sec {
-      padding: 16px 18px;
+      padding: 12px 14px;
       border-bottom: 1px solid var(--border)
     }
 
@@ -144,7 +158,7 @@
       letter-spacing: 3px;
       color: var(--muted);
       text-transform: uppercase;
-      margin-bottom: 11px;
+      margin-bottom: 8px;
       display: flex;
       align-items: center;
       justify-content: space-between
@@ -1416,7 +1430,7 @@
     </div>
   </header>
 
-  <aside class="sidebar">
+  <aside class="sidebar" id="leftSidebar">
 
     <!-- KAYNAK EKLE -->
     <!-- AYARLAR -->
@@ -1534,6 +1548,8 @@
 
   </aside>
 
+  <div class="resizer" id="resizerLeft"></div>
+
   <main>
     <div class="chat-area" id="chatArea">
       <div class="welcome" id="welcome">
@@ -1550,7 +1566,9 @@
     </div>
   </main>
 
-  <aside class="right-sidebar">
+  <div class="resizer" id="resizerRight"></div>
+
+  <aside class="right-sidebar" id="rightSidebar">
     <!-- API KEY -->
     <div class="sec">
       <div class="sec-label">Gemini API Key</div>
@@ -1609,6 +1627,37 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
   <script>
     let apiKey = localStorage.getItem('g_key') || '';
     if (apiKey) { document.getElementById('apiKey').value = apiKey; document.getElementById('apiKey').classList.add('saved'); }
+
+    // ── Resizer Logic ────────────────────────────────────────────────────────
+    const resizerL = document.getElementById('resizerLeft');
+    const resizerR = document.getElementById('resizerRight');
+    let isDraggingL = false, isDraggingR = false;
+
+    resizerL.addEventListener('mousedown', () => { isDraggingL = true; resizerL.classList.add('dragging'); document.body.style.cursor = 'col-resize'; });
+    resizerR.addEventListener('mousedown', () => { isDraggingR = true; resizerR.classList.add('dragging'); document.body.style.cursor = 'col-resize'; });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isDraggingL && !isDraggingR) return;
+      e.preventDefault();
+      if (isDraggingL) {
+        let w = e.clientX;
+        if (w < 200) w = 200;
+        if (w > window.innerWidth / 2) w = window.innerWidth / 2;
+        document.documentElement.style.setProperty('--left-w', w + 'px');
+      }
+      if (isDraggingR) {
+        let w = window.innerWidth - e.clientX;
+        if (w < 200) w = 200;
+        if (w > window.innerWidth / 2) w = window.innerWidth / 2;
+        document.documentElement.style.setProperty('--right-w', w + 'px');
+      }
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (isDraggingL) { isDraggingL = false; resizerL.classList.remove('dragging'); }
+      if (isDraggingR) { isDraggingR = false; resizerR.classList.remove('dragging'); }
+      document.body.style.cursor = '';
+    });
 
     const _fetch = window.fetch;
     window.fetch = (url, opts = {}) => {
@@ -1835,6 +1884,7 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
 
     // ── History ────────────────────────────────────────────────────────────────
     let chatHistory = [];
+    let lastAiAnswer = "";
     let histCurrentPage = 1;
     const histItemsPerPage = 10;
 
@@ -1902,10 +1952,12 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
       if (!item) return;
       document.getElementById('welcome')?.remove();
       const chat = document.getElementById('chatArea');
+      chat.innerHTML = '';
       chat.insertAdjacentHTML('beforeend',
         `<div class="msg msg-user"><div class="bubble">${esc(item.question)}</div></div>`);
 
       lastChunkDetails = item.chunk_details || [];
+      lastAiAnswer = item.answer || "";
       const sourcesHtml = getSourcesHtml(item.chunk_details);
 
       let answerFormatted = formatCitations(esc(item.answer));
@@ -1962,6 +2014,27 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
       const searchInput = document.getElementById('popupSearchInput');
       const textNode = document.getElementById('popupChunkText');
       const originalText = textNode.textContent;
+
+      // Auto Highlight target sentence based on AI Answer
+      const aiAns = (typeof lastAiAnswer !== 'undefined' ? lastAiAnswer : "");
+      const regex = new RegExp(`([^.?!]*\\[${chunkId}\\][^.?!]*[.?!])`, 'i');
+      const match = aiAns.match(regex);
+      if (match && match[1]) {
+        const targetSentence = match[1].toLowerCase().replace(/[^\\w\\sğüşöçıİĞÜŞÖÇ]/g, '');
+        const targetWords = targetSentence.split(/\\s+/).filter(w => w.length > 3);
+        const chunkSentences = originalText.split(/(?<=[.?!])\\s+/);
+        let bestScore = 0; let bestIdx = -1;
+        for (let i = 0; i < chunkSentences.length; i++) {
+          let sc = 0;
+          const sWords = chunkSentences[i].toLowerCase().split(/\\s+/);
+          targetWords.forEach(tw => { if (sWords.includes(tw)) sc++; });
+          if (sc > bestScore) { bestScore = sc; bestIdx = i; }
+        }
+        if (bestIdx !== -1 && bestScore > 0) {
+          chunkSentences[bestIdx] = `<span class="search-highlight">${chunkSentences[bestIdx]}</span>`;
+          textNode.innerHTML = chunkSentences.join(' ');
+        }
+      }
 
       searchInput.addEventListener('input', function () {
         const val = this.value.trim();
@@ -2157,8 +2230,11 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
             <div class="ebook-content" id="ebookContent">Yükleniyor...</div>
             <div class="ebook-sidebar">
               <div class="ebook-summary-header">
-                <b>✨ Yapay Zeka Özeti</b>
-                <button class="btn btn-b" style="padding:4px 8px;font-size:10px" onclick="summarizeDocument('${esc(docName.replace(/'/g, "\\'"))}', this)">Özeti Çıkar</button>
+                <b>✨ Yapay Zeka Arayüzü</b>
+                <div style="display:flex;gap:4px">
+                  <button class="btn btn-b" style="padding:4px 8px;font-size:10px" onclick="summarizeDocument('${esc(docName.replace(/'/g, "\\'"))}', this)">Özeti Çıkar</button>
+                  <button class="btn btn-o" style="padding:4px 8px;font-size:10px" onclick="tocDocument('${esc(docName.replace(/'/g, "\\'"))}', this)">📑 İçindekiler</button>
+                </div>
               </div>
               <div class="ebook-summary-content" id="ebookSummary">
                 Belgeyi hızlıca kavramak için yukarıdaki butona tıklayarak özetini çıkarabilirsiniz.
@@ -2176,6 +2252,32 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
         document.getElementById('ebookContent').textContent = data.content;
       } catch (e) {
         document.getElementById('ebookContent').innerHTML = `<span style="color:var(--danger)">Metin yüklenemedi: ${e.message}</span>`;
+      }
+    }
+
+    async function tocDocument(docName, btnElement) {
+      if (!apiKey) return toast('Önce sol alttan API Key girin!', 'e');
+
+      const summaryArea = document.getElementById('ebookSummary');
+      btnElement.disabled = true;
+      btnElement.textContent = 'Bekleniyor...';
+
+      const fd = new FormData();
+      fd.append('doc_name', docName);
+
+      try {
+        const res = await fetch('/toc-document', { method: 'POST', body: fd, headers: { 'X-API-Key': apiKey } });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.detail);
+
+        let txt = d.toc.replace(/\\*\\*(.*?)\\*\\*/g, '<b>$1</b>');
+        txt = txt.replace(/\\*(.*?)\\*/g, '<i>$1</i>');
+        summaryArea.innerHTML = `<div style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border)"><b>📑 İçindekiler</b><br><br>${txt}</div>` + summaryArea.innerHTML;
+        btnElement.style.display = 'none';
+      } catch (e) {
+        toast('Hata: ' + e.message, 'e');
+        btnElement.disabled = false;
+        btnElement.textContent = '📑 İçindekiler';
       }
     }
 
@@ -2306,6 +2408,9 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
 
         // Chunk detaylarını sakla (popup için)
         lastChunkDetails = d.chunk_details || [];
+
+        lastChunkDetails = d.chunk_details || [];
+        lastAiAnswer = d.answer;
 
         const tags = getSourcesHtml(lastChunkDetails);
         let answerFormatted = formatCitations(esc(d.answer));
