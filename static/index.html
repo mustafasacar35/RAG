@@ -954,6 +954,176 @@
       font-size: 9px;
       letter-spacing: 2px
     }
+
+    /* ── DOC CHECKBOX ── */
+    .doc-item {
+      position: relative
+    }
+
+    .doc-check {
+      width: 13px;
+      height: 13px;
+      accent-color: var(--accent);
+      flex-shrink: 0;
+      cursor: pointer
+    }
+
+    .doc-rename-btn {
+      background: none;
+      border: none;
+      font-size: 10px;
+      cursor: pointer;
+      padding: 2px;
+      opacity: 0.4;
+      transition: opacity .2s
+    }
+
+    .doc-rename-btn:hover {
+      opacity: 1
+    }
+
+    .doc-rename-input {
+      font-family: var(--mono);
+      font-size: 10px;
+      border: 1px solid var(--accent);
+      border-radius: 3px;
+      padding: 2px 5px;
+      background: var(--bg);
+      color: var(--text);
+      width: 120px;
+      outline: none
+    }
+
+    /* ── SOURCE POPUP ── */
+    .popup-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      animation: fadeIn .2s ease
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0
+      }
+    }
+
+    .popup-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      max-width: 640px;
+      width: 90%;
+      max-height: 75vh;
+      overflow-y: auto;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15)
+    }
+
+    .popup-header {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      background: var(--surface);
+      z-index: 1
+    }
+
+    .popup-header h3 {
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 1px;
+      color: var(--accent)
+    }
+
+    .popup-close {
+      background: none;
+      border: none;
+      font-size: 18px;
+      cursor: pointer;
+      color: var(--muted);
+      padding: 0 4px
+    }
+
+    .popup-close:hover {
+      color: var(--text)
+    }
+
+    .popup-body {
+      padding: 16px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px
+    }
+
+    .popup-chunk {
+      background: var(--bg);
+      border-left: 3px solid var(--accent);
+      padding: 10px 14px;
+      border-radius: 0 5px 5px 0;
+      font-size: 12px;
+      line-height: 1.7;
+      color: var(--text);
+      position: relative
+    }
+
+    .popup-chunk:nth-child(2) {
+      border-left-color: var(--blue)
+    }
+
+    .popup-chunk:nth-child(3) {
+      border-left-color: var(--orange)
+    }
+
+    .popup-chunk:nth-child(4) {
+      border-left-color: var(--purple)
+    }
+
+    .popup-chunk:nth-child(5) {
+      border-left-color: var(--success)
+    }
+
+    .popup-chunk-source {
+      font-family: var(--mono);
+      font-size: 9px;
+      color: var(--muted);
+      margin-bottom: 6px
+    }
+
+    .popup-chunk-score {
+      position: absolute;
+      top: 8px;
+      right: 10px;
+      font-family: var(--mono);
+      font-size: 8px;
+      padding: 1px 6px;
+      border-radius: 10px;
+      background: rgba(28, 126, 214, 0.1);
+      color: var(--accent)
+    }
+
+    .stag {
+      font-family: var(--mono);
+      font-size: 9px;
+      padding: 2px 7px;
+      background: rgba(71, 184, 255, .1);
+      border: 1px solid rgba(71, 184, 255, .25);
+      border-radius: 20px;
+      color: var(--blue);
+      cursor: pointer;
+      transition: all .15s
+    }
+
+    .stag:hover {
+      background: rgba(71, 184, 255, .25);
+      transform: scale(1.05)
+    }
   </style>
 </head>
 
@@ -1072,7 +1242,11 @@
     <div class="sec" style="flex:1">
       <div class="sec-label">
         Belgeler
-        <button class="btn btn-danger" style="font-size:8px;padding:2px 7px" onclick="clearDocs()">Temizle</button>
+        <div style="display:flex;gap:4px">
+          <button class="btn btn-outline" style="font-size:8px;padding:2px 7px" onclick="toggleAllDocs()"
+            title="Hepsini seç/kaldır">☑</button>
+          <button class="btn btn-danger" style="font-size:8px;padding:2px 7px" onclick="clearDocs()">Temizle</button>
+        </div>
       </div>
       <div class="docs-list" id="docsList">
         <div class="empty-docs">Henüz belge yok</div>
@@ -1086,11 +1260,12 @@
 Yanıtlarını YALNIZCA sağlanan kaynaklara dayandır. Kaynaklarda bilgi yoksa bunu belirt.
 Türkçe sorulara Türkçe, İngilizce sorulara İngilizce yanıt ver.
 
-ÖNEMLİ FORMAT KURALLARI:
-- Yanıtlarında kesinlikle yıldız (*), çift yıldız (**), markdown başlık (#), madde işareti veya liste formatı KULLANMA.
-- Düz metin olarak, doğal ve akıcı cümlelerle yaz. Sanki bir uzman biriyle yüz yüze sohbet ediyormuş gibi samimi ve anlaşılır bir dil kullan.
-- Yapay zeka tarafından yazıldığı anlaşılmamalı. İnsan gibi, doğal bir üslupla yanıt ver.
-- Paragraflar halinde yaz, kısa ve öz tut.</textarea>
+KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
+1. Asla yıldız karakteri kullanma. Hiçbir kelimeyi yıldızlarla çevreleme.
+2. Asla markdown formatı kullanma.
+3. Asla liste yapma. Her şeyi düz paragraflar halinde yaz.
+4. Bir doktorla sohbet eder gibi doğal ve samimi bir üslup kullan.
+5. Kalın, italik veya metin vurgulaması yapma.</textarea>
     </div>
 
     <!-- AYARLAR -->
@@ -1352,33 +1527,114 @@ Türkçe sorulara Türkçe, İngilizce sorulara İngilizce yanıt ver.
     }
 
     // ── Documents ──────────────────────────────────────────────────────────────
+    let docList = []; // [{name, chunks, type}]
+    let lastChunkDetails = []; // Son sorgunun chunk detayları
+
     async function loadDocs() {
       try {
         const res = await fetch('/documents');
         const d = await res.json();
         document.getElementById('chunkCount').textContent = d.total_chunks ? d.total_chunks + ' parça' : '';
         const list = document.getElementById('docsList');
-        if (!d.documents.length) { list.innerHTML = '<div class="empty-docs">Henüz belge yok</div>'; return; }
-        list.innerHTML = d.documents.map(doc => {
+        docList = d.documents || [];
+        if (!docList.length) { list.innerHTML = '<div class="empty-docs">Henüz belge yok</div>'; return; }
+        list.innerHTML = docList.map((doc, idx) => {
           const icon = doc.name.startsWith('▶') ? '▶️'
             : doc.type === 'web' || doc.name.startsWith('🌐') ? '🌐'
-              : doc.name.endsWith('.pdf') ? '📄'
-                : doc.name.endsWith('.epub') ? '📗'
-                  : doc.name.endsWith('.docx') ? '📝' : '📃';
-          const label = doc.name.length > 32 ? doc.name.slice(0, 30) + '…' : doc.name;
+              : doc.name.startsWith('📁') ? '📁'
+                : doc.name.endsWith('.pdf') ? '📄'
+                  : doc.name.endsWith('.epub') ? '📗'
+                    : doc.name.endsWith('.docx') ? '📝' : '📃';
+          const label = doc.name.length > 28 ? doc.name.slice(0, 26) + '…' : doc.name;
           return `<div class="doc-item">
+          <input type="checkbox" class="doc-check" checked data-source="${esc(doc.name)}" id="dc${idx}">
           <span class="doc-icon">${icon}</span>
-          <span class="doc-name" title="${doc.name}">${label}</span>
+          <span class="doc-name" title="${esc(doc.name)}" id="dn${idx}">${esc(label)}</span>
           <span class="doc-chunks">${doc.chunks}p</span>
+          <button class="doc-rename-btn" onclick="renameDoc('${esc(doc.name)}', ${idx})" title="İsim değiştir">✏️</button>
         </div>`;
         }).join('');
       } catch (e) { }
+    }
+
+    function getSelectedSources() {
+      const checks = document.querySelectorAll('.doc-check:checked');
+      if (checks.length === 0 || checks.length === docList.length) return ''; // hepsi seçili = filtre yok
+      return Array.from(checks).map(c => c.dataset.source).join('||||');
+    }
+
+    function toggleAllDocs() {
+      const checks = document.querySelectorAll('.doc-check');
+      const allChecked = Array.from(checks).every(c => c.checked);
+      checks.forEach(c => c.checked = !allChecked);
+    }
+
+    async function renameDoc(oldName, idx) {
+      const span = document.getElementById('dn' + idx);
+      const current = span.textContent;
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'doc-rename-input';
+      input.value = oldName;
+      span.replaceWith(input);
+      input.focus();
+      input.select();
+
+      async function doRename() {
+        const newName = input.value.trim();
+        if (!newName || newName === oldName) { loadDocs(); return; }
+        const fd = new FormData();
+        fd.append('old_name', oldName);
+        fd.append('new_name', newName);
+        try {
+          const res = await fetch('/rename-document', { method: 'POST', body: fd });
+          const d = await res.json();
+          if (!res.ok) throw new Error(d.detail);
+          toast(d.message, 's');
+        } catch (e) { toast(e.message, 'e'); }
+        loadDocs();
+      }
+
+      input.addEventListener('keydown', e => {
+        if (e.key === 'Enter') doRename();
+        if (e.key === 'Escape') loadDocs();
+      });
+      input.addEventListener('blur', doRename);
     }
 
     async function clearDocs() {
       if (!confirm('Tüm belgeler silinsin mi?')) return;
       await fetch('/documents', { method: 'DELETE' });
       toast('Belgeler temizlendi', 's'); loadDocs();
+    }
+
+    // ── Source Popup ───────────────────────────────────────────────────────────
+    function showSourcePopup(sourceName) {
+      const chunks = lastChunkDetails.filter(c => c.source === sourceName);
+      if (!chunks.length) { toast('Bu kaynaktan eşleşme bulunamadı', 'w'); return; }
+
+      const overlay = document.createElement('div');
+      overlay.className = 'popup-overlay';
+      overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+
+      const chunksHtml = chunks.map(c => {
+        const scoreHtml = c.score !== null ? `<span class="popup-chunk-score">Skor: ${c.score}</span>` : '';
+        return `<div class="popup-chunk">
+          ${scoreHtml}
+          <div class="popup-chunk-source">${esc(c.source)}</div>
+          ${esc(c.text)}
+        </div>`;
+      }).join('');
+
+      overlay.innerHTML = `<div class="popup-box">
+        <div class="popup-header">
+          <h3>📖 ${esc(sourceName)}</h3>
+          <button class="popup-close" onclick="this.closest('.popup-overlay').remove()">✕</button>
+        </div>
+        <div class="popup-body">${chunksHtml}</div>
+      </div>`;
+
+      document.body.appendChild(overlay);
     }
 
     // ── Chat ───────────────────────────────────────────────────────────────────
@@ -1403,13 +1659,19 @@ Türkçe sorulara Türkçe, İngilizce sorulara İngilizce yanıt ver.
         fd.append('question', q);
         fd.append('system_prompt', document.getElementById('sysPrompt').value);
         fd.append('top_k', document.getElementById('topK').value);
+        const sel = getSelectedSources();
+        if (sel) fd.append('selected_sources', sel);
         const res = await fetch('/query', { method: 'POST', body: fd });
         const d = await res.json();
         document.getElementById(tid)?.remove();
         if (!res.ok) throw new Error(d.detail);
+
+        // Chunk detaylarını sakla (popup için)
+        lastChunkDetails = d.chunk_details || [];
+
         const tags = d.sources.map(s => {
           const lbl = s.startsWith('http') ? '🌐 ' + new URL(s).hostname : s;
-          return `<span class="stag">${esc(lbl)}</span>`;
+          return `<span class="stag" onclick="showSourcePopup('${s.replace(/'/g, "\\'")}')">${esc(lbl)}</span>`;
         }).join('');
         chat.insertAdjacentHTML('beforeend',
           `<div class="msg msg-ai">

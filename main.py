@@ -86,11 +86,26 @@ DEFAULT_SYSTEM_PROMPT = """Sen deneyimli bir sağlık danışmanısın. Sana ver
 Yanıtlarını YALNIZCA sağlanan kaynaklara dayandır. Kaynaklarda bilgi yoksa bunu belirt.
 Türkçe sorulara Türkçe, İngilizce sorulara İngilizce yanıt ver.
 
-ÖNEMLİ FORMAT KURALLARI:
-- Yanıtlarında kesinlikle yıldız (*), çift yıldız (**), markdown başlık (#), madde işareti veya liste formatı KULLANMA.
-- Düz metin olarak, doğal ve akıcı cümlelerle yaz. Sanki bir uzman biriyle yüz yüze sohbet ediyormuş gibi samimi ve anlaşılır bir dil kullan.
-- Yapay zeka tarafından yazıldığı anlaşılmamalı. İnsan gibi, doğal bir üslupla yanıt ver.
-- Paragraflar halinde yaz, kısa ve öz tut."""
+KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
+1. Asla yıldız karakteri kullanma. Ne tek yıldız ne çift yıldız. Hiçbir kelimeyi yıldızlarla çevreleme.
+2. Asla markdown formatı kullanma. Başlık için # işareti koyma.
+3. Asla numaralı veya madde işaretli liste yapma.
+4. Asla tire (-) veya nokta (•) ile başlayan satırlar oluşturma.
+5. Her şeyi düz paragraflar halinde yaz. Bilgileri akıcı cümlelerle birbirine bağla.
+6. Bir doktorla sohbet eder gibi doğal ve samimi bir üslup kullan.
+7. Kalın, italik veya herhangi bir metin vurgulaması yapma."""
+
+def strip_markdown(text: str) -> str:
+    """AI yanıtından kalan markdown işaretlerini temizler."""
+    # **bold** ve *italic* kaldır
+    text = re.sub(r'\*{1,3}([^*]+)\*{1,3}', r'\1', text)
+    # ### başlıklar kaldır
+    text = re.sub(r'^#{1,6}\s*', '', text, flags=re.MULTILINE)
+    # - veya * ile başlayan liste öğelerini düz metne çevir
+    text = re.sub(r'^[\-\*•]\s+', '', text, flags=re.MULTILINE)
+    # Numaralı liste (1. 2. vb) → düz metin
+    text = re.sub(r'^\d+\.\s+', '', text, flags=re.MULTILINE)
+    return text.strip()
 
 def get_api_key(x: Optional[str] = None) -> str:
     return x or GEMINI_API_KEY_ENV or ""
@@ -734,21 +749,45 @@ async def crawl_stop(job_id: str):
 
 @app.post("/query")
 async def query(
-    question:      str = Form(...),
-    system_prompt: str = Form(DEFAULT_SYSTEM_PROMPT),
-    top_k:         int = Form(5),
+    question:         str = Form(...),
+    system_prompt:    str = Form(DEFAULT_SYSTEM_PROMPT),
+    top_k:            int = Form(5),
+    selected_sources: str = Form(""),   # virgülle ayrılmış kaynak isimleri (boş=hepsi)
     x_api_key: Optional[str] = Header(None)
 ):
     api_key = get_api_key(x_api_key)
     if not api_key: raise HTTPException(400, "GEMINI_API_KEY ayarlanmamış")
     if collection.count() == 0: raise HTTPException(400, "Henüz belge yüklenmedi")
 
+    # Kaynak filtresi
+    where_filter = None
+    if selected_sources.strip():
+        src_list = [s.strip() for s in selected_sources.split("||||") if s.strip()]
+        if src_list:
+            where_filter = {"source": {"$in": src_list}}
+
     q_emb   = await get_embedding(question, api_key)
-    results = collection.query(query_embeddings=[q_emb],
-                               n_results=min(top_k, collection.count()))
+    query_args = dict(
+        query_embeddings=[q_emb],
+        n_results=min(top_k, collection.count()),
+    )
+    if where_filter:
+        query_args["where"] = where_filter
+
+    results = collection.query(**query_args)
     chunks  = results["documents"][0]
     metas   = results["metadatas"][0]
+    dists   = results["distances"][0] if "distances" in results else []
     sources = list({m["source"] for m in metas})
+
+    # Chunk detayları (popup için)
+    chunk_details = []
+    for i, c in enumerate(chunks):
+        chunk_details.append({
+            "text": c,
+            "source": metas[i]["source"],
+            "score": round(dists[i], 3) if i < len(dists) else None,
+        })
 
     context = "\n\n---\n\n".join(
         f"[Kaynak: {metas[i]['source']}]\n{c}" for i, c in enumerate(chunks))
@@ -756,7 +795,15 @@ async def query(
         f"Aşağıdaki kaynaklardan yararlanarak soruyu yanıtla:\n\n{context}\n\nSoru: {question}",
         system_prompt, api_key)
 
-    return {"answer": answer, "sources": sources, "chunks_used": len(chunks)}
+    # Markdown temizle
+    answer = strip_markdown(answer)
+
+    return {
+        "answer": answer,
+        "sources": sources,
+        "chunks_used": len(chunks),
+        "chunk_details": chunk_details,
+    }
 
 # ── Documents ────────────────────────────────────────────────────────────────
 
@@ -772,6 +819,27 @@ async def list_documents():
             srcs[s] = {"name": s, "chunks": 0, "type": m.get("type","file")}
         srcs[s]["chunks"] += 1
     return {"documents": list(srcs.values()), "total_chunks": collection.count()}
+
+@app.post("/rename-document")
+async def rename_document(
+    old_name: str = Form(...),
+    new_name: str = Form(...),
+):
+    """Belge kaynağının adını değiştirir."""
+    if collection.count() == 0:
+        raise HTTPException(400, "Belge bulunamadı")
+    items = collection.get(include=["metadatas"])
+    ids_to_update = []
+    metas_to_update = []
+    for idx, m in enumerate(items["metadatas"]):
+        if m.get("source") == old_name:
+            ids_to_update.append(items["ids"][idx])
+            m["source"] = new_name
+            metas_to_update.append(m)
+    if not ids_to_update:
+        raise HTTPException(404, f"'{old_name}' bulunamadı")
+    collection.update(ids=ids_to_update, metadatas=metas_to_update)
+    return {"message": f"✅ '{old_name}' → '{new_name}' olarak güncellendi ({len(ids_to_update)} parça)"}
 
 @app.delete("/documents")
 async def clear_all():
