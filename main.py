@@ -845,6 +845,26 @@ async def query(
 async def get_history():
     return load_history()
 
+@app.delete("/history/{item_id}")
+async def delete_history_item(item_id: str):
+    hist = load_history()
+    new_hist = [h for h in hist if h.get("id") != item_id]
+    if len(hist) == len(new_hist):
+        raise HTTPException(404, "Geçmiş kaydı bulunamadı")
+    save_history(new_hist)
+    return {"message": "Geçmiş kaydı silindi"}
+
+@app.post("/history/{item_id}/touch")
+async def touch_history_item(item_id: str):
+    hist = load_history()
+    for i, h in enumerate(hist):
+        if h.get("id") == item_id:
+            item = hist.pop(i)
+            hist.insert(0, item)
+            save_history(hist)
+            return {"message": "Geçmiş öne alındı"}
+    raise HTTPException(404, "Geçmiş kaydı bulunamadı")
+
 # ── Documents & Folders ──────────────────────────────────────────────────────
 
 FOLDERS_FILE = "folders.json"

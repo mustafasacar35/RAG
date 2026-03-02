@@ -41,7 +41,7 @@
       height: 100vh;
       overflow: hidden;
       display: grid;
-      grid-template-columns: 360px 1fr;
+      grid-template-columns: 340px 1fr 300px;
       grid-template-rows: 54px 1fr
     }
 
@@ -116,10 +116,18 @@
       }
     }
 
-    /* ── SIDEBAR ── */
-    aside {
+    /* ── SIDEBARS ── */
+    .sidebar {
       background: var(--surface);
       border-right: 1px solid var(--border);
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column
+    }
+
+    .right-sidebar {
+      background: var(--surface);
+      border-left: 1px solid var(--border);
       overflow-y: auto;
       display: flex;
       flex-direction: column
@@ -1340,11 +1348,55 @@
       border: 1px solid var(--border);
       padding: 6px 8px;
       border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      transition: border-color .2s;
+    }
+
+    .hist-text {
       cursor: pointer;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      transition: border-color .2s;
+      flex: 1;
+    }
+
+    .hist-del {
+      background: none;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 12px;
+      padding: 0 4px;
+    }
+
+    .hist-del:hover {
+      color: var(--danger);
+    }
+
+    .hist-pagination {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 10px;
+      font-family: var(--mono);
+      font-size: 9px;
+      color: var(--muted);
+    }
+
+    .hist-page-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 2px 6px;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+
+    .hist-page-btn:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
     }
 
     .hist-item:hover {
@@ -1364,9 +1416,9 @@
     </div>
   </header>
 
-  <aside>
+  <aside class="sidebar">
 
-    <!-- API KEY -->
+    <!-- KAYNAK EKLE -->
     <div class="sec">
       <div class="sec-label">Gemini API Key</div>
       <div class="row">
@@ -1479,38 +1531,6 @@
       </div>
     </div>
 
-    <!-- GEÇMİŞ -->
-    <div class="sec">
-      <div class="sec-label">Geçmiş Sorular</div>
-      <div class="history-list" id="histList">
-        <div class="empty-docs">Geçmiş yok</div>
-      </div>
-    </div>
-
-    <!-- SYSTEM PROMPT -->
-    <div class="sec">
-      <div class="sec-label">System Prompt</div>
-      <textarea id="sysPrompt">Sen deneyimli bir sağlık danışmanısın. Sana verilen kaynak belgelerden yararlanarak soruları yanıtla.
-Yanıtlarını YALNIZCA sağlanan kaynaklara dayandır. Kaynaklarda bilgi yoksa bunu belirt.
-Türkçe sorulara Türkçe, İngilizce sorulara İngilizce yanıt ver.
-
-KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
-1. Asla yıldız karakteri kullanma. Hiçbir kelimeyi yıldızlarla çevreleme.
-2. Asla markdown formatı kullanma.
-3. Asla liste yapma. Her şeyi düz paragraflar halinde yaz.
-4. Bir doktorla sohbet eder gibi doğal ve samimi bir üslup kullan.
-5. Kalın, italik veya metin vurgulaması yapma.</textarea>
-    </div>
-
-    <!-- AYARLAR -->
-    <div class="sec">
-      <div class="sec-label">Arama Ayarları</div>
-      <div class="topk-row">
-        <label>Kaynak sayısı (top-k)</label>
-        <input type="range" min="1" max="10" value="5" id="topK"
-          oninput="document.getElementById('topKVal').textContent=this.value">
-        <div class="topk-val" id="topKVal">5</div>
-      </div>
     </div>
 
   </aside>
@@ -1530,6 +1550,45 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
       <button class="sbtn" id="sbtn" onclick="sendQuery()">↑</button>
     </div>
   </main>
+
+  <aside class="right-sidebar">
+    <!-- GEÇMİŞ -->
+    <div class="sec">
+      <div class="sec-label">Geçmiş Sorular</div>
+      <div class="history-list" id="histList">
+        <div class="empty-docs">Geçmiş yok</div>
+      </div>
+      <div class="hist-pagination" id="histPagination"></div>
+    </div>
+
+    <!-- SYSTEM PROMPT -->
+    <div class="sec" style="flex:1">
+      <div class="sec-label">System Prompt</div>
+      <textarea id="sysPrompt" style="height:100%">Sen deneyimli bir sağlık danışmanısın. Sana verilen kaynak belgelerden yararlanarak soruları yanıtla.
+Yanıtlarını YALNIZCA sağlanan kaynaklara dayandır. Kaynaklarda bilgi yoksa bunu belirt.
+Türkçe sorulara Türkçe, İngilizce sorulara İngilizce yanıt ver.
+
+KESİN format KURALLARI (bunlara kesinlikle uy, ihlal etme):
+1. Asla yıldız karakteri kullanma. Hiçbir kelimeyi yıldızlarla çevreleme.
+2. Asla markdown formatı kullanma.
+3. Asla liste yapma. Her şeyi düz paragraflar halinde yaz.
+4. Bir doktorla sohbet eder gibi doğal ve samimi bir üslup kullan.
+5. Kalın, italik veya metin vurgulaması yapma.</textarea>
+    </div>
+
+    <!-- API KEY -->
+    <div class="sec">
+      <div class="sec-label">Gemini API Key</div>
+      <div class="row">
+        <input type="password" id="apiKey" placeholder="AIza..." autocomplete="off">
+        <button class="btn btn-y" onclick="saveKey()">OK</button>
+      </div>
+      <div style="margin-top:5px;font-family:var(--mono);font-size:9px;color:var(--muted)">
+        <a href="https://aistudio.google.com/app/apikey" target="_blank"
+          style="color:var(--blue)">aistudio.google.com</a> → ücretsiz key
+      </div>
+    </div>
+  </aside>
 
   <div id="toast"></div>
 
@@ -1762,20 +1821,69 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
 
     // ── History ────────────────────────────────────────────────────────────────
     let chatHistory = [];
+    let histCurrentPage = 1;
+    const histItemsPerPage = 10;
+
     async function loadHistory() {
       try {
         const res = await fetch('/history');
         const data = await res.json();
         chatHistory = data;
-        const list = document.getElementById('histList');
-        if (!data.length) { list.innerHTML = '<div class="empty-docs">Geçmiş yok</div>'; return; }
-        list.innerHTML = data.map(h =>
-          `<div class="hist-item" onclick="loadHistoryItem('${h.id}')" title="${esc(h.question)}">${esc(h.question)}</div>`
-        ).join('');
+        renderHistory();
       } catch (e) { }
     }
 
-    function loadHistoryItem(id) {
+    function renderHistory() {
+      const list = document.getElementById('histList');
+      const pag = document.getElementById('histPagination');
+
+      if (!chatHistory.length) {
+        list.innerHTML = '<div class="empty-docs">Geçmiş yok</div>';
+        pag.innerHTML = '';
+        return;
+      }
+
+      const totalPages = Math.ceil(chatHistory.length / histItemsPerPage);
+      if (histCurrentPage > totalPages) histCurrentPage = totalPages;
+      if (histCurrentPage < 1) histCurrentPage = 1;
+
+      const start = (histCurrentPage - 1) * histItemsPerPage;
+      const end = start + histItemsPerPage;
+      const pageItems = chatHistory.slice(start, end);
+
+      list.innerHTML = pageItems.map(h =>
+        `<div class="hist-item" title="${esc(h.question)}">
+           <div class="hist-text" onclick="loadHistoryItem('${h.id}')">${esc(h.question)}</div>
+           <button class="hist-del" onclick="deleteHistoryItem('${h.id}')" title="Sil">🗑️</button>
+         </div>`
+      ).join('');
+
+      if (totalPages > 1) {
+        pag.innerHTML = `
+          <button class="hist-page-btn" onclick="histCurrentPage--; renderHistory()" ${histCurrentPage === 1 ? 'disabled' : ''}>&lt; Geri</button>
+          <span>Sayfa ${histCurrentPage} / ${totalPages}</span>
+          <button class="hist-page-btn" onclick="histCurrentPage++; renderHistory()" ${histCurrentPage === totalPages ? 'disabled' : ''}>İleri &gt;</button>
+        `;
+      } else {
+        pag.innerHTML = '';
+      }
+    }
+
+    async function deleteHistoryItem(id) {
+      if (!confirm("Bu geçmiş kaydını silmek istediğinize emin misiniz?")) return;
+      try {
+        const res = await fetch(`/history/${id}`, { method: 'DELETE' });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.detail);
+        toast(d.message, 's');
+        chatHistory = chatHistory.filter(h => h.id !== id);
+        renderHistory();
+      } catch (e) {
+        toast(e.message, 'e');
+      }
+    }
+
+    async function loadHistoryItem(id) {
       const item = chatHistory.find(h => h.id === id);
       if (!item) return;
       document.getElementById('welcome')?.remove();
@@ -1793,6 +1901,12 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
            ${sourcesHtml}
          </div>`);
       chat.scrollTop = chat.scrollHeight;
+
+      // Geçmişte öne al
+      try {
+        await fetch(`/history/${id}/touch`, { method: 'POST' });
+        loadHistory(); // Listeyi yenile
+      } catch (e) { }
     }
 
     function formatCitations(text) {
@@ -2068,8 +2182,8 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
         if (!res.ok) throw new Error(d.detail);
 
         // Basit markdown temizliği/render
-        let txt = d.summary.replace(/\\*\\*(.*?)\\*\\*/g, '<b>$1</b>');
-        txt = txt.replace(/\\*(.*?)\\*/g, '<i>$1</i>');
+        let txt = d.summary.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
+        txt = txt.replace(/\*(.*?)\*/g, '<i>$1</i>');
         summaryArea.innerHTML = txt;
         btnElement.style.display = 'none';
       } catch (e) {
