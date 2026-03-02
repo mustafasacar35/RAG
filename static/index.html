@@ -921,7 +921,9 @@
     }
 
     @keyframes spin {
-      to { transform: rotate(360deg) }
+      to {
+        transform: rotate(360deg)
+      }
     }
 
     .drive-not-configured {
@@ -1052,7 +1054,8 @@
         <div id="driveContent">
           <div class="drive-not-configured" id="driveNotConfigured" style="display:none">
             ⚠️ Google Drive yapılandırılmamış.<br>
-            <span style="font-size:8px">GOOGLE_DRIVE_FOLDER_ID ve<br>GOOGLE_SERVICE_ACCOUNT_JSON<br>env var'larını ayarlayın.</span>
+            <span style="font-size:8px">GOOGLE_DRIVE_FOLDER_ID ve<br>GOOGLE_SERVICE_ACCOUNT_JSON<br>env var'larını
+              ayarlayın.</span>
           </div>
           <div id="driveConfigured" style="display:none">
             <button class="btn btn-b btn-full" onclick="triggerDriveSync()" id="driveSyncBtn">🔄 Drive Sync</button>
@@ -1079,9 +1082,15 @@
     <!-- SYSTEM PROMPT -->
     <div class="sec">
       <div class="sec-label">System Prompt</div>
-      <textarea id="sysPrompt">Sen yardımcı bir asistansın. Sana verilen kaynak belgelerden yararlanarak soruları yanıtla.
+      <textarea id="sysPrompt">Sen deneyimli bir sağlık danışmanısın. Sana verilen kaynak belgelerden yararlanarak soruları yanıtla.
 Yanıtlarını YALNIZCA sağlanan kaynaklara dayandır. Kaynaklarda bilgi yoksa bunu belirt.
-Türkçe sorulara Türkçe, İngilizce sorulara İngilizce yanıt ver.</textarea>
+Türkçe sorulara Türkçe, İngilizce sorulara İngilizce yanıt ver.
+
+ÖNEMLİ FORMAT KURALLARI:
+- Yanıtlarında kesinlikle yıldız (*), çift yıldız (**), markdown başlık (#), madde işareti veya liste formatı KULLANMA.
+- Düz metin olarak, doğal ve akıcı cümlelerle yaz. Sanki bir uzman biriyle yüz yüze sohbet ediyormuş gibi samimi ve anlaşılır bir dil kullan.
+- Yapay zeka tarafından yazıldığı anlaşılmamalı. İnsan gibi, doğal bir üslupla yanıt ver.
+- Paragraflar halinde yaz, kısa ve öz tut.</textarea>
     </div>
 
     <!-- AYARLAR -->
@@ -1486,7 +1495,7 @@ Türkçe sorulara Türkçe, İngilizce sorulara İngilizce yanıt ver.</textarea
       // Dosya listesi
       if (d.files && d.files.length > 0) {
         list.innerHTML = d.files.map(f =>
-          `<div class="drive-file">📁 <b title="${esc(f.name)}">${esc(f.name.length > 28 ? f.name.slice(0,26)+'…' : f.name)}</b> <span>${f.chunks}p</span></div>`
+          `<div class="drive-file">📁 <b title="${esc(f.name)}">${esc(f.name.length > 28 ? f.name.slice(0, 26) + '…' : f.name)}</b> <span>${f.chunks}p</span></div>`
         ).join('');
       } else {
         list.innerHTML = '';
