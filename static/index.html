@@ -1107,21 +1107,29 @@
       border-radius: 8px;
       max-width: 640px;
       width: 90%;
-      max-height: 75vh;
+      max-height: 80vh;
       overflow-y: auto;
-      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15)
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15);
+      display: flex;
+      flex-direction: column;
     }
 
     .popup-header {
       padding: 14px 18px;
       border-bottom: 1px solid var(--border);
       display: flex;
-      align-items: center;
-      justify-content: space-between;
+      flex-direction: column;
+      gap: 10px;
       position: sticky;
       top: 0;
       background: var(--surface);
-      z-index: 1
+      z-index: 10;
+    }
+
+    .popup-header-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
     }
 
     .popup-header h3 {
@@ -1129,6 +1137,21 @@
       font-size: 11px;
       letter-spacing: 1px;
       color: var(--accent)
+    }
+
+    .popup-search-input {
+      width: 100%;
+      padding: 6px 10px;
+      font-size: 11px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      outline: none;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    .popup-search-input:focus {
+      border-color: var(--accent);
     }
 
     .popup-close {
@@ -1148,8 +1171,93 @@
       padding: 16px 18px;
       display: flex;
       flex-direction: column;
-      gap: 12px
+      gap: 12px;
+      overflow-y: auto;
     }
+
+    /* ── E-BOOK MODAL & SUMMARY ── */
+    .ebook-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      z-index: 200;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      animation: fadeIn .2s ease
+    }
+
+    .ebook-box {
+      background: var(--surface);
+      border-radius: 8px;
+      width: 85vw;
+      height: 85vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+      overflow: hidden;
+    }
+
+    .ebook-header {
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--surface2);
+    }
+
+    .ebook-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--accent);
+    }
+
+    .ebook-body {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    .ebook-content {
+      flex: 2;
+      padding: 24px;
+      overflow-y: auto;
+      font-size: 14px;
+      line-height: 1.8;
+      white-space: pre-wrap;
+      color: var(--text);
+    }
+
+    .ebook-sidebar {
+      flex: 1;
+      border-left: 1px solid var(--border);
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .ebook-summary-header {
+      padding: 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .ebook-summary-content {
+      padding: 16px;
+      overflow-y: auto;
+      font-size: 12px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+    }
+
+    .search-highlight {
+      background-color: var(--orange);
+      color: #fff;
+    }
+
 
     .popup-chunk {
       background: var(--bg);
@@ -1706,18 +1814,37 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
       const chunkHtml = `<div class="popup-chunk" style="border-left-color:var(--accent); background:rgba(255, 235, 59, 0.15)">
           ${scoreHtml}
           <div class="popup-chunk-source">${esc(c.source)}</div>
-          <mark style="background:rgba(255, 235, 59, 0.4);color:inherit;padding:2px;border-radius:3px">${esc(c.text)}</mark>
+          <mark style="background:rgba(255, 235, 59, 0.4);color:inherit;padding:2px;border-radius:3px" id="popupChunkText">${esc(c.text)}</mark>
         </div>`;
 
       overlay.innerHTML = `<div class="popup-box">
         <div class="popup-header">
-          <h3>📖 Kaynak [${chunkId}] - ${esc(c.source)}</h3>
-          <button class="popup-close" onclick="this.closest('.popup-overlay').remove()">✕</button>
+          <div class="popup-header-top">
+            <h3>📖 Kaynak [${chunkId}] - <span style="font-size:9px;color:var(--muted)">${esc(c.source.length > 30 ? c.source.slice(0, 30) + '...' : c.source)}</span></h3>
+            <button class="popup-close" onclick="this.closest('.popup-overlay').remove()">✕</button>
+          </div>
+          <input type="text" class="popup-search-input" id="popupSearchInput" placeholder="Bu metin içinde ara... (Yazdıkça eşleşmeler vurgulanır)">
         </div>
         <div class="popup-body">${chunkHtml}</div>
       </div>`;
 
       document.body.appendChild(overlay);
+
+      // Search Highlight Logic
+      const searchInput = document.getElementById('popupSearchInput');
+      const textNode = document.getElementById('popupChunkText');
+      const originalText = textNode.textContent;
+
+      searchInput.addEventListener('input', function () {
+        const val = this.value.trim();
+        if (!val) {
+          textNode.textContent = originalText;
+          return;
+        }
+        const regex = new RegExp("(" + val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ")", "gi");
+        textNode.innerHTML = originalText.replace(regex, "<span class='search-highlight'>$1</span>");
+      });
+      searchInput.focus();
     }
 
     function getSourcesHtml(chunkDetails) {
@@ -1782,7 +1909,7 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
               return `<div class="doc-item">
                  <input type="checkbox" class="doc-check fcheck-${f.id}" checked data-source="${esc(doc.name)}" id="dc${idx}">
                  <span class="doc-icon">${icon}</span>
-                 <span class="doc-name" title="${esc(doc.name)}" id="dn${idx}">${esc(label)}</span>
+                 <span class="doc-name" style="cursor:pointer; color:var(--text); text-decoration:underline; font-weight:600" onclick="showDocumentModal('${esc(doc.name)}')" title="Okumak için tıkla" id="dn${idx}">${esc(label)}</span>
                  <span class="doc-chunks">${doc.chunks}p</span>
                  
                  <div style="margin-left:auto; display:flex; gap:6px; align-items:center;">
@@ -1884,6 +2011,72 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
       checks.forEach(c => c.checked = !allChecked);
       // klasör checkboxlarını da senkronize etsek iyi olur
       document.querySelectorAll('.folder summary input[type=checkbox]').forEach(c => c.checked = !allChecked);
+    }
+
+    // ── Document Viewer & Summarizer Modal ──────────────────────────────────────
+    async function showDocumentModal(docName) {
+      const overlay = document.createElement('div');
+      overlay.className = 'ebook-overlay';
+      overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+
+      overlay.innerHTML = `
+        <div class="ebook-box">
+          <div class="ebook-header">
+            <div class="ebook-title">📖 ${esc(docName)}</div>
+            <button class="popup-close" onclick="this.closest('.ebook-overlay').remove()">✕</button>
+          </div>
+          <div class="ebook-body">
+            <div class="ebook-content" id="ebookContent">Yükleniyor...</div>
+            <div class="ebook-sidebar">
+              <div class="ebook-summary-header">
+                <b>✨ Yapay Zeka Özeti</b>
+                <button class="btn btn-b" style="padding:4px 8px;font-size:10px" onclick="summarizeDocument('${esc(docName.replace(/'/g, "\\'"))}', this)">Özeti Çıkar</button>
+              </div>
+              <div class="ebook-summary-content" id="ebookSummary">
+                Belgeyi hızlıca kavramak için yukarıdaki butona tıklayarak özetini çıkarabilirsiniz.
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+
+      try {
+        const res = await fetch('/document/' + encodeURIComponent(docName));
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail);
+        document.getElementById('ebookContent').textContent = data.content;
+      } catch (e) {
+        document.getElementById('ebookContent').innerHTML = `<span style="color:var(--danger)">Metin yüklenemedi: ${e.message}</span>`;
+      }
+    }
+
+    async function summarizeDocument(docName, btnElement) {
+      if (!apiKey) return toast('Önce sol alttan API Key girin!', 'e');
+
+      const summaryArea = document.getElementById('ebookSummary');
+      btnElement.disabled = true;
+      btnElement.textContent = 'Bekleniyor...';
+      summaryArea.innerHTML = '<span class="typing" style="margin:20px 0;background:transparent;border:none"><span></span><span></span><span></span></span>';
+
+      const fd = new FormData();
+      fd.append('doc_name', docName);
+
+      try {
+        const res = await fetch('/summarize-document', { method: 'POST', body: fd, headers: { 'X-API-Key': apiKey } });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.detail);
+
+        // Basit markdown temizliği/render
+        let txt = d.summary.replace(/\\*\\*(.*?)\\*\\*/g, '<b>$1</b>');
+        txt = txt.replace(/\\*(.*?)\\*/g, '<i>$1</i>');
+        summaryArea.innerHTML = txt;
+        btnElement.style.display = 'none';
+      } catch (e) {
+        summaryArea.innerHTML = `<span style="color:var(--danger)">Hata: ${e.message}</span>`;
+        btnElement.disabled = false;
+        btnElement.textContent = 'Tekrar Dene';
+      }
     }
 
     async function renameDoc(oldName, idx) {

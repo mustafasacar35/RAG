@@ -955,6 +955,13 @@ async def move_doc(doc_name: str = Form(...), target_folder_id: str = Form(...))
 # ── Documents (Eski uç nokta - geriye dönük uyumluluk için korundu) ─────────
 
 @app.get("/documents")
+async def list_documents():
+    if collection.count() == 0:
+        return {"documents": [], "total_chunks": 0}
+    items = collection.get(include=["metadatas"])
+    srcs: dict[str, dict] = {}
+    for m in items["metadatas"]:
+        s = m["source"]
         if s not in srcs:
             srcs[s] = {"name": s, "chunks": 0, "type": m.get("type","file")}
         srcs[s]["chunks"] += 1
@@ -999,6 +1006,62 @@ async def clear_all():
     save_folders([{"id": "f_default", "name": "Diğer Belgeler", "docs": []}])
     
     return {"message": "Tüm belgeler silindi"}
+
+# ── Document Viewer & Summarization ──────────────────────────────────────────
+
+@app.get("/document/{doc_name:path}")
+async def get_document_content(doc_name: str):
+    """Belirtilen kaynağın (belgenin) tüm içeriğini getirir."""
+    if collection.count() == 0:
+        raise HTTPException(404, "Koleksiyon boş")
+    
+    import urllib.parse
+    doc_name = urllib.parse.unquote(doc_name)
+    
+    results = collection.get(
+        where={"source": doc_name},
+        include=["documents", "metadatas"]
+    )
+    
+    docs = results.get("documents", [])
+    if not docs:
+        raise HTTPException(404, "Belge bulunamadı veya içeriği yok")
+        
+    full_text = "\n\n".join(docs)
+    return {"name": doc_name, "content": full_text}
+
+@app.post("/summarize-document")
+async def summarize_document(
+    doc_name: str = Form(...),
+    x_api_key: Optional[str] = Header(None)
+):
+    if not x_api_key and not GEMINI_API_KEY:
+        raise HTTPException(401, "API Key eksik")
+    api_key = x_api_key or GEMINI_API_KEY
+    
+    if collection.count() == 0:
+        raise HTTPException(404, "Koleksiyon boş")
+        
+    results = collection.get(
+        where={"source": doc_name},
+        include=["documents"]
+    )
+    docs = results.get("documents", [])
+    if not docs:
+        raise HTTPException(404, "Belge bulunamadı")
+        
+    full_text = "\n\n".join(docs)
+    # Gemini limitlerine takılmaması için metni sınırla (isteğe bağlı)
+    max_chars = 100000 
+    truncated_text = full_text[:max_chars]
+    
+    prompt = f"Lütfen aşağıdaki belgenin ana hatlarıyla kapsamlı bir özetini çıkar. Belge ne hakkında ve hangi detayları içeriyor kısaca belirt:\n\n{truncated_text}"
+    
+    try:
+        summary_text = await gemini_chat(prompt, "Sen bir akademik özetleme asistanısın. Belgeyi nesnel, açık ve anlaşılır bir şekilde özetle. Kısa maddeler kullanabilirsin.", api_key)
+        return {"summary": summary_text}
+    except Exception as e:
+        raise HTTPException(500, f"Özet çıkarılırken hata oluştu: {str(e)}")
 
 # ── Google Drive Sync ────────────────────────────────────────────────────────
 
