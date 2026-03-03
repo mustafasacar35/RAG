@@ -1482,8 +1482,14 @@
 
       <!-- TEK URL -->
       <div class="tab-pane" id="tab-url">
-        <input type="url" id="urlInput" placeholder="YouTube linki veya herhangi bir URL" style="margin-bottom:7px">
-        <button class="btn btn-b btn-full" onclick="addUrl()">+ Ekle</button>
+        <select id="uploadFolderSelectUrl" class="move-select"
+          style="width:100%; margin-bottom:6px; padding:6px; font-size:10px; background:var(--surface2); color:var(--text); border-color:var(--border);">
+          <option value="f_default">📁 Diğer Belgeler / Otomatik YT Klasörü</option>
+        </select>
+        <textarea id="urlInput"
+          placeholder="Birden fazla link (YouTube, Web URL vb.) eklemek için alt alta yapıştırın..." rows="3"
+          style="width:100%; margin-bottom:7px; padding:8px; font-size:11px; font-family:var(--mono); background:var(--bg); border:1px solid var(--border); border-radius:4px; color:var(--text);"></textarea>
+        <button class="btn btn-b btn-full" id="addUrlBtn" onclick="addUrl()">+ Link(leri) Ekle</button>
       </div>
 
       <!-- SITE CRAWL -->
@@ -1532,6 +1538,8 @@
               ayarlayın.</span>
           </div>
           <div id="driveConfigured" style="display:none">
+            <input type="text" id="driveFolderId" placeholder="Özel Klasör ID (Boşsa env değişkeni kullanılır)"
+              style="width:100%; margin-bottom:6px; padding:6px; font-size:10px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px;">
             <button class="btn btn-b btn-full" onclick="triggerDriveSync()" id="driveSyncBtn">🔄 Drive Sync</button>
             <div class="drive-status" id="driveStatusBox" style="display:none">
               <div class="drive-status-line" id="driveStatusLine">Bekleniyor...</div>
@@ -1729,17 +1737,36 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
     // ── Single URL ─────────────────────────────────────────────────────────────
     async function addUrl() {
       if (!apiKey) return toast('Önce API key!', 'e');
-      const url = document.getElementById('urlInput').value.trim();
-      if (!url) return toast('URL girin', 'e');
-      toast('İşleniyor...', 'i');
-      const fd = new FormData(); fd.append('url', url);
-      try {
-        const res = await fetch('/add-url', { method: 'POST', body: fd });
-        const d = await res.json();
-        if (!res.ok) throw new Error(d.detail);
-        toast(d.message, 's');
-        document.getElementById('urlInput').value = ''; loadDocs();
-      } catch (e) { toast(e.message, 'e'); }
+      const urlText = document.getElementById('urlInput').value.trim();
+      const folderId = document.getElementById('uploadFolderSelectUrl')?.value || 'f_default';
+      const urls = urlText.split('\n').map(u => u.trim()).filter(Boolean);
+      if (urls.length === 0) return toast('En az 1 URL girin', 'e');
+
+      document.getElementById('addUrlBtn').disabled = true;
+      document.getElementById('addUrlBtn').textContent = 'İşleniyor...';
+      let successCount = 0;
+
+      for (const url of urls) {
+        toast(`${url.slice(0, 30)}... işleniyor`, 'i');
+        const fd = new FormData();
+        fd.append('url', url);
+        if (folderId !== "f_default") fd.append('folder_id', folderId);
+
+        try {
+          const res = await fetch('/add-url', { method: 'POST', body: fd });
+          const d = await res.json();
+          if (!res.ok) throw new Error(d.detail);
+          successCount++;
+        } catch (e) {
+          toast(`Hata: ${e.message}`, 'e');
+        }
+      }
+
+      if (successCount > 0) toast(`🚀 ${successCount} link eklendi`, 's');
+      document.getElementById('addUrlBtn').disabled = false;
+      document.getElementById('addUrlBtn').textContent = '+ Link(leri) Ekle';
+      document.getElementById('urlInput').value = '';
+      loadDocs();
     }
 
     // ── Layered Crawl ──────────────────────────────────────────────────────────
@@ -2140,6 +2167,7 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
                      ${folderOptions}
                    </select>
                    <button class="doc-move-btn" onclick="renameDoc('${esc(doc.name)}', ${idx})" title="İsmi Değiştir">✏️</button>
+                   <button class="doc-move-btn" style="color:var(--danger);" onclick="deleteDocument('${esc(doc.name)}')" title="Sil">🗑️</button>
                  </div>
                </div>`;
             }).join('');
@@ -2544,8 +2572,13 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
 
     async function triggerDriveSync() {
       if (!apiKey) return toast('Önce API key!', 'e');
+
+      const fdId = document.getElementById('driveFolderId')?.value.trim() || '';
+      const fd = new FormData();
+      if (fdId) fd.append('folder_id', fdId);
+
       try {
-        const res = await fetch('/sync-drive', { method: 'POST' });
+        const res = await fetch('/sync-drive', { method: 'POST', body: fd });
         const d = await res.json();
         if (!res.ok) throw new Error(d.detail);
         toast(d.message, 'i');
