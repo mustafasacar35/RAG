@@ -500,11 +500,17 @@
     .doc-item {
       background: var(--bg);
       border: 1px solid var(--border);
-      border-radius: 4px;
-      padding: 6px 10px;
+      border-radius: 6px;
+      padding: 8px 12px;
       display: flex;
       align-items: center;
-      gap: 7px
+      gap: 7px;
+      transition: background-color 0.2s ease, border-color 0.2s ease;
+    }
+
+    .doc-item:hover {
+      background-color: var(--surface2);
+      border-color: var(--accent);
     }
 
     .doc-icon {
@@ -544,43 +550,56 @@
     /* ── BUTTONS ── */
     .btn {
       font-family: var(--mono);
-      font-size: 10px;
-      letter-spacing: 2px;
+      font-size: 11px;
+      letter-spacing: 1px;
       text-transform: uppercase;
-      padding: 7px 12px;
+      padding: 8px 14px;
       border: none;
-      border-radius: 4px;
+      border-radius: 6px;
       cursor: pointer;
-      transition: all .15s;
+      transition: all 0.2s ease;
       font-weight: 700;
-      white-space: nowrap
+      white-space: nowrap;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+
+    .btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+    }
+
+    .btn:active {
+      transform: translateY(0);
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
     }
 
     .btn-y {
       background: var(--accent);
-      color: #000
+      color: #000;
     }
 
     .btn-y:hover {
-      background: #fff
+      background: #ffec3d;
     }
 
     .btn-b {
       background: var(--blue);
-      color: #000
+      color: #fff;
     }
 
     .btn-b:hover {
-      background: #fff
+      background: #339af0;
+      color: #fff;
     }
 
     .btn-o {
       background: var(--orange);
-      color: #000
+      color: #fff;
     }
 
     .btn-o:hover {
-      background: #fff
+      background: #ff922b;
+      color: #fff;
     }
 
     .btn-outline {
@@ -1027,24 +1046,35 @@
       margin-bottom: 8px;
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 6px;
+      border-radius: 8px;
       overflow: hidden;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+      transition: box-shadow 0.2s ease;
+    }
+
+    .folder:hover {
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
     }
 
     .folder summary {
-      padding: 8px 10px;
+      padding: 10px 14px;
       background: var(--bg);
       color: var(--text);
       font-family: var(--mono);
       font-size: 11px;
-      font-weight: bold;
+      font-weight: 700;
       cursor: pointer;
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 8px;
       user-select: none;
       border-bottom: 1px solid transparent;
-      transition: all 0.2s;
+      transition: background-color 0.2s ease, color 0.2s ease;
+    }
+
+    .folder summary:hover {
+      background-color: var(--surface2);
+      color: var(--accent);
     }
 
     .folder[open]>summary {
