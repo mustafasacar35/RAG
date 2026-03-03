@@ -289,9 +289,18 @@ def remove_drive_file_from_index(drive_id: str):
     if ids_to_delete:
         collection.delete(ids=ids_to_delete)
 
-async def sync_drive_folder(api_key: str):
+async def sync_drive_folder(api_key: str, drive_folder_id: Optional[str] = None):
     """Drive klasörünü senkronize eder → yeni/değişen dosyaları indexler, silinenleri kaldırır."""
     global drive_sync_status
+    
+    folder_id_to_sync = drive_folder_id or GOOGLE_DRIVE_FOLDER_ID
+    if not folder_id_to_sync:
+        drive_sync_status.update({
+            "status": "error",
+            "message": "Drive klasör ID bulunamadı",
+        })
+        return
+
     drive_sync_status.update({
         "status": "running",
         "message": "Drive klasörü taranıyor...",
@@ -302,7 +311,7 @@ async def sync_drive_folder(api_key: str):
 
     try:
         service = await asyncio.to_thread(get_drive_service)
-        drive_files = await asyncio.to_thread(list_drive_files, service, GOOGLE_DRIVE_FOLDER_ID)
+        drive_files = await asyncio.to_thread(list_drive_files, service, folder_id_to_sync)
 
         # Mevcut index'teki drive dosya ID'leri
         indexed_ids = await asyncio.to_thread(get_indexed_drive_ids)
@@ -712,7 +721,11 @@ async def upload_file(
 # ── Single URL ───────────────────────────────────────────────────────────────
 
 @app.post("/add-url")
-async def add_url(url: str = Form(...), x_api_key: Optional[str] = Header(None)):
+async def add_url(
+    url: str = Form(...),
+    folder_id: Optional[str] = Form(None),
+    x_api_key: Optional[str] = Header(None)
+):
     api_key = get_api_key(x_api_key)
     if not api_key: raise HTTPException(400, "GEMINI_API_KEY ayarlanmamış")
 
@@ -735,6 +748,27 @@ async def add_url(url: str = Form(...), x_api_key: Optional[str] = Header(None))
     if not text.strip(): raise HTTPException(400, "İçerik boş")
     chunks = chunk_text(text)
     await index_chunks(chunks, source, extra, api_key)
+    
+    # Klasör işlemleri
+    target_fid = folder_id
+    if vid and (not target_fid or target_fid == "f_default"):
+        folders = load_folders()
+        yt_folder = next((f for f in folders if f["name"].lower() == "youtube"), None)
+        if not yt_folder:
+            yt_folder = {"id": f"f_{str(uuid.uuid4())[:8]}", "name": "YouTube", "docs": []}
+            folders.append(yt_folder)
+        target_fid = yt_folder["id"]
+        save_folders(folders)
+
+    if target_fid and target_fid != "f_default":
+        folders = load_folders()
+        for f in folders:
+            if f["id"] == target_fid:
+                if source not in f.get("docs", []):
+                    f.setdefault("docs", []).append(source)
+                    save_folders(folders)
+                break
+
     return {"message": f"✅ {'▶' if vid else '🌐'} Eklendi ({len(chunks)} parça)"}
 
 # ── Layered site crawl ───────────────────────────────────────────────────────
@@ -1039,6 +1073,28 @@ async def rename_document(
     collection.update(ids=ids_to_update, metadatas=metas_to_update)
     return {"message": f"✅ '{old_name}' → '{new_name}' olarak güncellendi ({len(ids_to_update)} parça)"}
 
+@app.delete("/document/{doc_name:path}")
+async def delete_document(doc_name: str):
+    import urllib.parse
+    doc_name = urllib.parse.unquote(doc_name)
+
+    if collection.count() == 0:
+        raise HTTPException(404, "Koleksiyon boş")
+    
+    results = collection.get(where={"source": doc_name}, include=["metadatas"])
+    if not results or not results["ids"]:
+        raise HTTPException(404, f"'{doc_name}' bulunamadı")
+        
+    collection.delete(ids=results["ids"])
+    
+    folders = load_folders()
+    for f in folders:
+        if doc_name in f.get("docs", []):
+            f["docs"].remove(doc_name)
+    save_folders(folders)
+    
+    return {"message": f"🗑️ '{doc_name}' tamamen silindi ({len(results['ids'])} parça)"}
+
 @app.delete("/documents")
 async def clear_all():
     chroma_client.delete_collection("documents")
@@ -1131,7 +1187,7 @@ async def toc_document(
     max_chars = 100000 
     truncated_text = full_text[:max_chars]
     
-    prompt = f"Lütfen aşağıdaki belgenin sadece 'Ana Başlıkları' ve 'Alt Başlıklarını' hiyerarşik bir liste (İçindekiler / Table of Contents) formatında çıkar:\n\n{truncated_text}"
+    prompt = f"Lütfen aşağıdaki belgenin sadece 'Ana Başlıkları' ve 'Alt Başlıklarını' hiyerarşik bir liste (İçindekiler / Table of Contents) formatında çıkar. Bütün başlıkları KESİNLİKLE TÜRKÇE DİLİNDE oluştur:\n\n{truncated_text}"
     
     try:
         toc_text = await gemini_chat(prompt, "Sen bir akademik asistansın. Sadece başlıkları kullanarak hiyerarşik bir İçindekiler listesi oluştur. Madde işareti kullan, ekstra yorum yapma.", api_key)
@@ -1145,11 +1201,12 @@ async def toc_document(
 @app.post("/sync-drive")
 async def sync_drive(
     background_tasks: BackgroundTasks,
+    folder_id: Optional[str] = Form(None),
     x_api_key: Optional[str] = Header(None)
 ):
     """Manuel Drive sync tetikler."""
-    if not GOOGLE_DRIVE_FOLDER_ID:
-        raise HTTPException(400, "GOOGLE_DRIVE_FOLDER_ID ayarlanmamış")
+    if not GOOGLE_DRIVE_FOLDER_ID and not folder_id:
+        raise HTTPException(400, "GOOGLE_DRIVE_FOLDER_ID veya özel klasör ID ayarlanmamış")
     if not GOOGLE_SERVICE_ACCOUNT_JSON:
         raise HTTPException(400, "GOOGLE_SERVICE_ACCOUNT_JSON ayarlanmamış")
     if drive_sync_status["status"] == "running":
@@ -1159,7 +1216,8 @@ async def sync_drive(
     if not api_key:
         raise HTTPException(400, "GEMINI_API_KEY ayarlanmamış")
 
-    background_tasks.add_task(sync_drive_folder, api_key)
+    folder_id_to_sync = folder_id or GOOGLE_DRIVE_FOLDER_ID
+    background_tasks.add_task(sync_drive_folder, api_key, folder_id_to_sync)
     return {"message": "🔄 Drive sync başlatıldı"}
 
 @app.get("/drive-status")
