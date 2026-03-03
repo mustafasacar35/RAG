@@ -195,8 +195,6 @@ async def content_score(query_hint: str, api_key: str) -> float:
         return 1.0
         
     try:
-        # Önce tabloda hiç kayıt var mı diye kontrol edelim
-        # (Chroma'nın count(). 1 tane varsa bile yeter)
         count_res = await asyncio.to_thread(lambda: supabase.table("documents").select("id", count="exact").limit(1).execute())
         if not count_res.count or count_res.count == 0:
             return 1.0
@@ -204,15 +202,20 @@ async def content_score(query_hint: str, api_key: str) -> float:
         emb = await get_embedding(query_hint, api_key)
         emb_str = f"[{','.join(map(str, emb))}]"
         
-        # Supabase'de vector araması yapmak için rpc (Remote Procedure Call) veya match() fonksiyonu yazmak gerekebilir.
-        # Geçici veya direkt 'order by' sorgusu:
-        res = await asyncio.to_thread(lambda: supabase.table("documents").select("id, embedding").order("embedding", desc=False).limit(1).execute())
-        # Ancak Supabase REST API üzerinden doğrudan vektör sıralaması `.order("embedding <-> '...'")` şeklinde desteklemiyor olabilir.
-        # Bu yüzden veritabanında "match_documents" fonksiyonu oluşturmamız gerekecek (Aşağıdaki adımlarda ekleyeceğiz).
-        # Şimdilik 1.0 dönüp kırmaya engel olalım
+        # SQL rpc call
+        res = await asyncio.to_thread(
+            lambda: supabase.rpc('match_documents', {
+                'query_embedding': emb_str,
+                'match_threshold': 0.0,
+                'match_count': 1
+            }).execute()
+        )
         
-        # TODO: RPC call to match_documents
-        # res = supabase.rpc('match_documents', {'query_embedding': emb_str, 'match_threshold': 0.0, 'match_count': 1}).execute()
+        if res.data:
+            # similarity returns 1 - cosine_distance. Thus distance = 1 - similarity.
+            sim = res.data[0].get("similarity", 0)
+            return 1.0 - sim
+            
         return 1.0
     except Exception as e:
         logging.error(f"Supabase score error: {e}")
@@ -922,16 +925,42 @@ async def query(
     if not count_res.count or count_res.count == 0: 
         raise HTTPException(400, "Henüz belge yüklenmedi")
 
-    # TODO: Supabase vector search (RPC: match_documents)
-    # Şimdilik match_documents olmadığı için çalışmayacak, bir sonraki adımda SQL kuracağız.
-    # q_emb = await get_embedding(question, api_key)
-    # q_emb_str = f"[{','.join(map(str, q_emb))}]"
+    q_emb = await get_embedding(question, api_key)
+    q_emb_str = f"[{','.join(map(str, q_emb))}]"
     
-    # Geçici mock data (Supabase vector search henüz tam hazır olmadığı için):
-    chunks = ["(SQL Supabase Vector Search eklenecek)"]
-    metas = [{"source": "Belirtilmemiş"}]
-    dists = [0.1]
-    sources = []
+    # Vector search RPC call
+    try:
+        res = await asyncio.to_thread(
+            lambda: supabase.rpc('match_documents', {
+                'query_embedding': q_emb_str,
+                'match_threshold': 0.0,
+                'match_count': top_k
+            }).execute()
+        )
+    except Exception as e:
+        logging.error(f"Supabase match_documents RPC error: {e}")
+        raise HTTPException(500, f"Veritabanı arama hatası (Fonksiyon yüklendi mi?): {e}")
+
+    results_data = res.data or []
+    
+    # Filtreleme (where_filter)
+    if selected_sources.strip():
+        src_list = [s.strip() for s in selected_sources.split("||||") if s.strip()]
+        if src_list:
+            results_data = [d for d in results_data if d.get("source") in src_list]
+
+    if not results_data:
+        # Sonuç bulunamasa da LLM'ye boş veya en iyi tahmini yollayalım
+        chunks = ["(Belirli kriterlere uyan veri bulunamadı)"]
+        metas = []
+        dists = []
+        sources = []
+    else:
+        chunks  = [d["content"] for d in results_data]
+        metas   = [{"source": d["source"]} for d in results_data]
+        # cosine distance = 1 - similarity
+        dists   = [1.0 - d["similarity"] for d in results_data]
+        sources = list({d["source"] for d in results_data})
 
     # Chunk detayları (popup için)
     chunk_details = []
