@@ -221,31 +221,40 @@
     /* ── TABS ── */
     .tabs {
       display: flex;
-      gap: 2px;
-      margin-bottom: 6px
+      gap: 4px;
+      margin-bottom: 12px;
+      padding: 4px;
+      background: var(--surface);
+      border-radius: 6px;
+      border: 1px solid var(--border);
     }
 
     .tab {
       flex: 1;
       font-family: var(--mono);
-      font-size: 9px;
+      font-size: 10px;
       letter-spacing: 1px;
       text-transform: uppercase;
-      padding: 4px 2px;
-      border: 1px solid var(--border);
-      border-radius: 3px;
+      padding: 6px 2px;
+      border: none;
+      border-radius: 4px;
       background: transparent;
       color: var(--muted);
       cursor: pointer;
-      transition: all .15s;
-      text-align: center
+      transition: all .2s;
+      text-align: center;
+      font-weight: 600;
+    }
+
+    .tab:hover {
+      color: var(--text);
     }
 
     .tab.active {
       background: var(--accent);
       color: #000;
-      border-color: var(--accent);
-      font-weight: 700
+      font-weight: 700;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
     }
 
     .tab-pane {
@@ -1077,10 +1086,18 @@
       color: var(--accent);
     }
 
+    .folder[open] {
+      border-color: var(--accent);
+    }
+
     .folder[open]>summary {
-      background: var(--surface2);
+      background: rgba(232, 255, 71, 0.06);
       color: var(--accent);
-      border-bottom-color: var(--border);
+      border-bottom-color: rgba(232, 255, 71, 0.15);
+    }
+
+    .folder[open] .folder-content {
+      background: rgba(232, 255, 71, 0.02);
     }
 
     .folder-actions {
