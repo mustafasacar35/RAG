@@ -238,6 +238,23 @@ def list_drive_files(service, folder_id: str) -> list[dict]:
             break
     return results
 
+def resolve_drive_folder_id(service, folder_input: str) -> str:
+    """Kullanıcı klasör ismi girdiyse ID'sini bulur, ID girdiyse aynen döner."""
+    folder_input = folder_input.strip()
+    if not folder_input:
+        return ""
+    
+    # ID format check (Google Drive IDs are usually 25+ chars, no spaces)
+    if len(folder_input) > 20 and " " not in folder_input:
+        return folder_input
+        
+    query = f"name='{folder_input}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+    resp = service.files().list(q=query, fields="files(id, name)", pageSize=1).execute()
+    files = resp.get('files', [])
+    if not files:
+        raise ValueError(f"Drive'da '{folder_input}' adında bir klasör bulunamadı.")
+    return files[0]['id']
+
 def download_drive_file(service, file_info: dict) -> bytes:
     """Drive dosyasını indirir. Google Docs ise text/plain olarak export eder."""
     mime = file_info.get('mimeType', '')
@@ -311,7 +328,18 @@ async def sync_drive_folder(api_key: str, drive_folder_id: Optional[str] = None)
 
     try:
         service = await asyncio.to_thread(get_drive_service)
-        drive_files = await asyncio.to_thread(list_drive_files, service, folder_id_to_sync)
+        
+        # Eğer kullanıcı klasör ismi girdiyse ID'yi çözümle
+        try:
+            resolved_folder_id = await asyncio.to_thread(resolve_drive_folder_id, service, folder_id_to_sync)
+        except ValueError as e:
+            drive_sync_status.update({
+                "status": "error",
+                "message": str(e)
+            })
+            return
+            
+        drive_files = await asyncio.to_thread(list_drive_files, service, resolved_folder_id)
 
         # Mevcut index'teki drive dosya ID'leri
         indexed_ids = await asyncio.to_thread(get_indexed_drive_ids)

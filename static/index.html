@@ -1068,10 +1068,12 @@
     .folder summary {
       padding: 10px 14px;
       background: var(--bg);
-      color: var(--text);
-      font-family: var(--mono);
-      font-size: 11px;
+      color: #1e3a8a;
+      font-family: 'Inter', var(--sans);
+      font-size: 12px;
       font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
       cursor: pointer;
       display: flex;
       align-items: center;
@@ -1082,22 +1084,22 @@
     }
 
     .folder summary:hover {
-      background-color: var(--surface2);
-      color: var(--accent);
+      background-color: #f0fdf4;
+      color: #1e40af;
     }
 
     .folder[open] {
-      border-color: var(--accent);
+      border-color: #3b82f6;
     }
 
     .folder[open]>summary {
-      background: rgba(232, 255, 71, 0.06);
-      color: var(--accent);
-      border-bottom-color: rgba(232, 255, 71, 0.15);
+      background: #e0f2fe;
+      color: #1d4ed8;
+      border-bottom-color: #bae6fd;
     }
 
     .folder[open] .folder-content {
-      background: rgba(232, 255, 71, 0.02);
+      background: #f0fdfa;
     }
 
     .folder-actions {
