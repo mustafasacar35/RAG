@@ -779,6 +779,8 @@ async def add_url(
     
     # Klasör işlemleri
     target_fid = folder_id
+    
+    # YouTube videoları için varsayılan klasör logic
     if vid and (not target_fid or target_fid == "f_default"):
         folders = load_folders()
         yt_folder = next((f for f in folders if f["name"].lower() == "youtube"), None)
@@ -786,6 +788,16 @@ async def add_url(
             yt_folder = {"id": f"f_{str(uuid.uuid4())[:8]}", "name": "YouTube", "docs": []}
             folders.append(yt_folder)
         target_fid = yt_folder["id"]
+        save_folders(folders)
+        
+    # Standard Web URL'leri (Site) için varsayılan klasör logic
+    elif not vid and (not target_fid or target_fid == "f_default"):
+        folders = load_folders()
+        web_folder = next((f for f in folders if f["name"].lower() == "web"), None)
+        if not web_folder:
+            web_folder = {"id": f"f_{str(uuid.uuid4())[:8]}", "name": "Web", "docs": []}
+            folders.append(web_folder)
+        target_fid = web_folder["id"]
         save_folders(folders)
 
     if target_fid and target_fid != "f_default":
