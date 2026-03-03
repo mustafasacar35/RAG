@@ -2232,6 +2232,16 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
       } catch (e) { toast(e.message, 'e'); }
     }
 
+    async function deleteDocument(docName) {
+      if (!confirm(`"${docName}" tamamen silinecek. Emin misiniz?`)) return;
+      try {
+        const res = await fetch(`/document/${encodeURIComponent(docName)}`, { method: 'DELETE' });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.detail);
+        toast(d.message, 's'); loadDocs();
+      } catch (e) { toast(e.message, 'e'); }
+    }
+
     async function moveDocSelect(docName, targetId) {
       if (!targetId) return;
       const fd = new FormData(); fd.append('doc_name', docName); fd.append('target_folder_id', targetId);
@@ -2412,12 +2422,12 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
       overlay.className = 'popup-overlay';
       overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
 
-      const chunksHtml = chunks.map(c => {
+      const chunksHtml = chunks.map((c, i) => {
         const scoreHtml = c.score !== null ? `<span class="popup-chunk-score">Skor: ${c.score}</span>` : '';
         return `<div class="popup-chunk">
           ${scoreHtml}
           <div class="popup-chunk-source">${esc(c.source)}</div>
-          ${esc(c.text)}
+          <div class="popup-chunk-text" id="popupChunkTextAll${i}">${esc(c.text)}</div>
         </div>`;
       }).join('');
 
@@ -2430,6 +2440,33 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
       </div>`;
 
       document.body.appendChild(overlay);
+
+      // Auto Highlight target sentences based on AI Answer
+      setTimeout(() => {
+        const aiAns = (typeof lastAiAnswer !== 'undefined' ? lastAiAnswer : "").toLowerCase().replace(/[^\w\sğüşöçıİĞÜŞÖÇ]/g, '');
+        const aiWords = aiAns.split(/\s+/).filter(w => w.length > 3);
+
+        if (aiWords.length > 0) {
+          chunks.forEach((c, i) => {
+            const textNode = document.getElementById('popupChunkTextAll' + i);
+            if (!textNode) return;
+            const originalText = textNode.textContent;
+            const chunkSentences = originalText.split(/(?<=[.?!])\s+/);
+            let bestScore = 0; let bestIdx = -1;
+
+            for (let j = 0; j < chunkSentences.length; j++) {
+              let sc = 0;
+              const sWords = chunkSentences[j].toLowerCase().split(/\s+/);
+              aiWords.forEach(aw => { if (sWords.includes(aw)) sc++; });
+              if (sc > bestScore) { bestScore = sc; bestIdx = j; }
+            }
+            if (bestIdx !== -1 && bestScore > 2) { // highlight if at least 3 matching words found
+              chunkSentences[bestIdx] = `<span class="search-highlight" style="padding:2px; border-radius:3px;">${chunkSentences[bestIdx]}</span>`;
+              textNode.innerHTML = chunkSentences.join(' ');
+            }
+          });
+        }
+      }, 50);
     }
 
     // ── Chat ───────────────────────────────────────────────────────────────────
