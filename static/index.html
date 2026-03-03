@@ -1458,7 +1458,7 @@
       <div class="sec-label">Kaynak Ekle</div>
       <div class="tabs">
         <button class="tab active" onclick="switchTab('file')">📁 Dosya</button>
-        <button class="tab" onclick="switchTab('url')">🔗 URL</button>
+        <button class="tab" onclick="switchTab('url')">🔗 YouTube</button>
         <button class="tab" onclick="switchTab('site')">🕷️ Site</button>
         <button class="tab" onclick="switchTab('drive')">☁️ Drive</button>
       </div>
@@ -2178,7 +2178,7 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
           const delBtn = isDefault ? '' : `<button onclick="deleteFolder('${f.id}')">🗑️</button>`;
 
           html += `
-          <details class="folder" open>
+          <details name="folders" class="folder">
             <summary>
               <input type="checkbox" checked title="Tüm klasörü seç/kaldır" onclick="toggleFolderDocs('${f.id}', this)">
               📁 <span>${esc(f.name)} (${docCount})</span>
