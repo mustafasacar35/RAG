@@ -778,19 +778,22 @@ async def upload_file(
         raise HTTPException(400, "Dosyadan metin çıkarılamadı.")
 
     chunks = chunk_text(text)
-    await index_chunks(chunks, filename, {"type": "file", "size_mb": round(size_mb, 2)}, api_key)
-
-    # Klasöre ekleme mantığı
-    if folder_id and folder_id != "f_default":
-        folders = load_folders()
-        for f in folders:
-            if f["id"] == folder_id:
-                if filename not in f.get("docs", []):
-                    f.setdefault("docs", []).append(filename)
-                    save_folders(folders)
-                break
-
-    return {"message": f"✅ '{filename}' yüklendi ({len(chunks)} parça · {size_mb:.1f} MB)"}
+    
+    try:
+        await index_chunks(chunks, filename, {"type": "file", "size_mb": round(size_mb, 2)}, api_key)
+        
+        # Klasöre ekleme mantığı
+        if folder_id and folder_id != "f_default":
+            folders = load_folders()
+            for f in folders:
+                if f["id"] == folder_id:
+                    if filename not in f.get("docs", []):
+                        f.setdefault("docs", []).append(filename)
+                        save_folders(folders)
+                    break
+        return {"message": f"✅ '{filename}' yüklendi ({len(chunks)} parça · {size_mb:.1f} MB)", "chunks": len(chunks)}
+    except Exception as e:
+        raise HTTPException(400, f"Yükleme tamamlanamadı: {e}")
 
 # ── Single URL ───────────────────────────────────────────────────────────────
 
