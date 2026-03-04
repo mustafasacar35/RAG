@@ -484,29 +484,23 @@ def yt_video_id(url: str) -> Optional[str]:
     return None
 
 def fetch_yt(vid: str) -> tuple[str, str]:
-    import subprocess
-    import sys
     try:
-        cmd = [sys.executable, "-m", "youtube_transcript_api", vid, "--format", "json"]
+        ytt = YouTubeTranscriptApi()
+        transcript_list = ytt.list(vid)
         
-        # Windows'ta konsol penceresi açılmaması için
-        kwargs = {}
-        if sys.platform == "win32":
-            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-            
-        res = subprocess.run(cmd, capture_output=True, text=True, check=True, **kwargs)
-        data = json.loads(res.stdout)
+        # Türkçe veya İngilizce altyazı bulmaya çalış
+        try:
+            transcript = transcript_list.find_transcript(['tr', 'en'])
+        except Exception:
+            # Bulamazsa ilk dildeki altyazıyı al
+            transcript = list(transcript_list)[0]
         
-        if isinstance(data, list) and len(data) > 0 and isinstance(data[0], list):
-            items = data[0]
-        else:
-            items = data
-            
-        text = " ".join([i.get("text", "") for i in items])
+        data = transcript.fetch()
+        text = " ".join([snippet.text for snippet in data])
         text = re.sub(r"\s+", " ", re.sub(r"\[.*?\]", "", text)).strip()
         
     except Exception as e:
-        raise ValueError(f"Altyazı bulunamadı veya kapalı. (Sistem Hatası: {str(e)[:50]})") from e
+        raise ValueError(f"Altyazı bulunamadı veya kapalı. (Sistem Hatası: {str(e)[:80]})") from e
 
     try:
         r = requests.get(f"https://www.youtube.com/watch?v={vid}",
@@ -1026,21 +1020,40 @@ async def touch_history_item(item_id: str):
 
 # ── Documents & Folders ──────────────────────────────────────────────────────
 
-FOLDERS_FILE = "folders.json"
-
 def load_folders() -> list[dict]:
-    if os.path.exists(FOLDERS_FILE):
-        try:
-            with open(FOLDERS_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    # Varsayılan yapı
-    return [{"id": "f_default", "name": "Diğer Belgeler", "docs": []}]
+    """Supabase'den klasör listesini çeker."""
+    try:
+        res = supabase.table("folders").select("*").execute()
+        folders = []
+        has_default = False
+        for row in (res.data or []):
+            docs = row.get("docs") or []
+            if isinstance(docs, str):
+                try: docs = json.loads(docs)
+                except: docs = []
+            f = {"id": row["id"], "name": row["name"], "docs": docs}
+            if row["id"] == "f_default":
+                has_default = True
+            folders.append(f)
+        if not has_default:
+            default_row = {"id": "f_default", "name": "Diğer Belgeler", "docs": []}
+            try:
+                supabase.table("folders").upsert(default_row).execute()
+            except: pass
+            folders.insert(0, default_row)
+        return folders
+    except Exception as e:
+        logging.error(f"load_folders error: {e}")
+        return [{"id": "f_default", "name": "Diğer Belgeler", "docs": []}]
 
 def save_folders(data: list[dict]):
-    with open(FOLDERS_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    """Klasör verilerini Supabase'e yazar (upsert)."""
+    try:
+        for f in data:
+            row = {"id": f["id"], "name": f["name"], "docs": f.get("docs", [])}
+            supabase.table("folders").upsert(row).execute()
+    except Exception as e:
+        logging.error(f"save_folders error: {e}")
 
 @app.get("/folders")
 async def get_folders():
@@ -1143,45 +1156,40 @@ async def move_doc(doc_name: str = Form(...), target_folder_id: str = Form(...))
 
 @app.get("/documents")
 async def list_documents():
-    if collection.count() == 0:
+    docs_res = await asyncio.to_thread(lambda: supabase.table("documents").select("source, metadata").execute())
+    if not docs_res.data:
         return {"documents": [], "total_chunks": 0}
-    items = collection.get(include=["metadatas"])
     srcs: dict[str, dict] = {}
-    for m in items["metadatas"]:
-        s = m["source"]
+    for d in docs_res.data:
+        s = d["source"]
         if s not in srcs:
+            m = d.get("metadata", {})
             srcs[s] = {"name": s, "chunks": 0, "type": m.get("type","file")}
         srcs[s]["chunks"] += 1
-    return {"documents": list(srcs.values()), "total_chunks": collection.count()}
+    count_res = await asyncio.to_thread(lambda: supabase.table("documents").select("id", count="exact").limit(1).execute())
+    total = count_res.count if count_res.count else 0
+    return {"documents": list(srcs.values()), "total_chunks": total}
 
 @app.post("/rename-document")
 async def rename_document(
     old_name: str = Form(...),
     new_name: str = Form(...),
 ):
-    """Belge kaynağının adını değiştirir."""
-    if collection.count() == 0:
-        raise HTTPException(400, "Belge bulunamadı")
-    items = collection.get(include=["metadatas"])
-    ids_to_update = []
-    metas_to_update = []
-    for idx, m in enumerate(items["metadatas"]):
-        if m.get("source") == old_name:
-            ids_to_update.append(items["ids"][idx])
-            m["source"] = new_name
-            metas_to_update.append(m)
-    # Belgeler isimlendirilirken folders.json içindeki referansı da güncelleyelim
+    """Belge kaynağının adını değiştirir (Supabase)."""
+    # Supabase'deki source alanını güncelle
+    res = await asyncio.to_thread(lambda: supabase.table("documents").update({"source": new_name}).eq("source", old_name).execute())
+    if not res.data:
+        raise HTTPException(404, f"'{old_name}' bulunamadı")
+    
+    # Klasör referanslarını güncelle
     folders = load_folders()
     for f in folders:
         if old_name in f.get("docs", []):
             f["docs"].remove(old_name)
             f["docs"].append(new_name)
     save_folders(folders)
-
-    if not ids_to_update:
-        raise HTTPException(404, f"'{old_name}' bulunamadı")
-    collection.update(ids=ids_to_update, metadatas=metas_to_update)
-    return {"message": f"✅ '{old_name}' → '{new_name}' olarak güncellendi ({len(ids_to_update)} parça)"}
+    
+    return {"message": f"✅ '{old_name}' → '{new_name}' olarak güncellendi ({len(res.data)} parça)"}
 
 @app.delete("/document/{doc_name:path}")
 async def delete_document(doc_name: str):
@@ -1231,23 +1239,15 @@ async def summarize_document(
     doc_name: str = Form(...),
     x_api_key: Optional[str] = Header(None)
 ):
-    if not x_api_key and not GEMINI_API_KEY:
+    api_key = get_api_key(x_api_key)
+    if not api_key:
         raise HTTPException(401, "API Key eksik")
-    api_key = x_api_key or GEMINI_API_KEY
     
-    if collection.count() == 0:
-        raise HTTPException(404, "Koleksiyon boş")
-        
-    results = collection.get(
-        where={"source": doc_name},
-        include=["documents"]
-    )
-    docs = results.get("documents", [])
-    if not docs:
+    res = await asyncio.to_thread(lambda: supabase.table("documents").select("content").eq("source", doc_name).execute())
+    if not res.data:
         raise HTTPException(404, "Belge bulunamadı")
         
-    full_text = "\n\n".join(docs)
-    # Gemini limitlerine takılmaması için metni sınırla (isteğe bağlı)
+    full_text = "\n\n".join(d["content"] for d in res.data)
     max_chars = 100000 
     truncated_text = full_text[:max_chars]
     
@@ -1265,22 +1265,15 @@ async def toc_document(
     x_api_key: Optional[str] = Header(None)
 ):
     """Belgenin içindekiler listesini (TOC) çıkarır."""
-    if not x_api_key and not GEMINI_API_KEY:
+    api_key = get_api_key(x_api_key)
+    if not api_key:
         raise HTTPException(401, "API Key eksik")
-    api_key = x_api_key or GEMINI_API_KEY
     
-    if collection.count() == 0:
-        raise HTTPException(404, "Koleksiyon boş")
-        
-    results = collection.get(
-        where={"source": doc_name},
-        include=["documents"]
-    )
-    docs = results.get("documents", [])
-    if not docs:
+    res = await asyncio.to_thread(lambda: supabase.table("documents").select("content").eq("source", doc_name).execute())
+    if not res.data:
         raise HTTPException(404, "Belge bulunamadı")
         
-    full_text = "\n\n".join(docs)
+    full_text = "\n\n".join(d["content"] for d in res.data)
     max_chars = 100000 
     truncated_text = full_text[:max_chars]
     
