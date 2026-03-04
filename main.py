@@ -12,6 +12,7 @@ from typing import Optional
 from urllib.parse import urljoin, urlparse
 from collections import deque
 from datetime import datetime
+import sys
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
@@ -123,7 +124,7 @@ def chunk_text(text: str, size: int = 800, overlap: int = 150) -> list[str]:
 
 async def get_embedding(text: str, api_key: str) -> list[float]:
     try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={api_key.strip()}"
         payload = {
             "model": "models/text-embedding-004",
             "content": {"parts": [{"text": text[:8000]}]},
