@@ -137,8 +137,7 @@ async def get_embedding(text: str, api_key: str) -> list[float]:
         return res_json["embedding"]["values"]
     except Exception as e:
         import traceback
-        with open("error_log.txt", "a", encoding="utf-8") as f:
-            f.write(f"\n{'='*60}\n{traceback.format_exc()}\n")
+        logging.error(f"Embedding API Error:\n{traceback.format_exc()}")
         raise
 
 async def gemini_chat(prompt: str, system_prompt: str, api_key: str) -> str:
@@ -945,7 +944,11 @@ async def query(
     if not count_res.count or count_res.count == 0: 
         raise HTTPException(400, "Henüz belge yüklenmedi")
 
-    q_emb = await get_embedding(question, api_key)
+    try:
+        q_emb = await get_embedding(question, api_key)
+    except Exception as e:
+        raise HTTPException(400, f"Embedding hatası (API Key geçersiz olabilir): {e}")
+
     q_emb_str = f"[{','.join(map(str, q_emb))}]"
     
     # Vector search RPC call
@@ -994,9 +997,12 @@ async def query(
 
     context = "\n\n---\n\n".join(
         f"[Kaynak {i+1}]: {c}" for i, c in enumerate(chunks))
-    answer  = await gemini_chat(
-        f"Aşağıdaki kaynaklardan yararlanarak soruyu yanıtla:\n\n{context}\n\nSoru: {question}",
-        system_prompt, api_key)
+    try:
+        answer  = await gemini_chat(
+            f"Aşağıdaki kaynaklardan yararlanarak soruyu yanıtla:\n\n{context}\n\nSoru: {question}",
+            system_prompt, api_key)
+    except Exception as e:
+        raise HTTPException(500, f"Yapay zeka yanıt üretirken hata oluştu: {e}")
 
     # Markdown temizle
     answer = strip_markdown(answer)
