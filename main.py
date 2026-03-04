@@ -127,8 +127,7 @@ async def get_embedding(text: str, api_key: str) -> list[float]:
         response = await asyncio.to_thread(
             client.models.embed_content,
             model='gemini-embedding-001',
-            contents=text[:8000],
-            config=types.EmbedContentConfig(output_dimensionality=768)
+            contents=text[:8000]
         )
         return response.embeddings[0].values
     except Exception as e:
@@ -900,17 +899,28 @@ async def crawl_stop(job_id: str):
 HISTORY_FILE = "history.json"
 
 def load_history() -> list:
-    if os.path.exists(HISTORY_FILE):
-        try:
-            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return []
+    try:
+        res = supabase.table("folders").select("docs").eq("id", "f_history").limit(1).execute()
+        if res.data and isinstance(res.data[0].get("docs"), list):
+            return res.data[0]["docs"]
+    except Exception as e:
+        logging.error(f"Error loading history from Supabase: {e}")
     return []
 
 def save_history(history: list):
-    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-        json.dump(history, f, ensure_ascii=False, indent=2)
+    try:
+        # Check if f_history exists
+        res = supabase.table("folders").select("id").eq("id", "f_history").limit(1).execute()
+        if not res.data:
+            supabase.table("folders").insert({
+                "id": "f_history",
+                "name": "_System_History_",
+                "docs": history
+            }).execute()
+        else:
+            supabase.table("folders").update({"docs": history}).eq("id", "f_history").execute()
+    except Exception as e:
+        logging.error(f"Error saving history to Supabase: {e}")
 
 # ── Query ────────────────────────────────────────────────────────────────────
 
@@ -1038,6 +1048,7 @@ def load_folders() -> list[dict]:
         folders = []
         has_default = False
         for row in (res.data or []):
+            if row["id"] == "f_history": continue
             docs = row.get("docs") or []
             if isinstance(docs, str):
                 try: docs = json.loads(docs)
@@ -1061,6 +1072,7 @@ def save_folders(data: list[dict]):
     """Klasör verilerini Supabase'e yazar (upsert)."""
     try:
         for f in data:
+            if f["id"] == "f_history": continue
             row = {"id": f["id"], "name": f["name"], "docs": f.get("docs", [])}
             supabase.table("folders").upsert(row).execute()
     except Exception as e:
