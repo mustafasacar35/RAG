@@ -453,6 +453,23 @@ async def sync_drive_folder(api_key: str, drive_folder_id: Optional[str] = None)
                 logging.warning(f"Drive dosyası işlenemedi: {fname} — {e}")
                 continue
 
+        if file_list:
+            try:
+                folders = await asyncio.to_thread(load_folders)
+                save_needed = False
+                for fold in folders:
+                    if fold["id"] == "f_default":
+                        for fn in file_list:
+                            doc_name = f"📁 {fn['name']}"
+                            if doc_name not in fold.get("docs", []):
+                                fold.setdefault("docs", []).append(doc_name)
+                                save_needed = True
+                        break
+                if save_needed:
+                    await asyncio.to_thread(save_folders, folders)
+            except Exception as e:
+                logging.warning(f"Klasör güncellenirken hata: {e}")
+
         drive_sync_status.update({
             "status": "done",
             "last_sync": datetime.now().isoformat(),
