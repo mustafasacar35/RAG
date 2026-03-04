@@ -1581,10 +1581,12 @@
       <!-- GOOGLE DRIVE -->
       <div class="tab-pane" id="tab-drive">
         <div id="driveContent">
-          <div class="drive-not-configured" id="driveNotConfigured" style="display:none">
-            ⚠️ Google Drive yapılandırılmamış.<br>
-            <span style="font-size:8px">GOOGLE_DRIVE_FOLDER_ID ve<br>GOOGLE_SERVICE_ACCOUNT_JSON<br>env var'larını
-              ayarlayın.</span>
+          <div class="drive-not-configured" id="driveNotConfigured"
+            style="display:none; opacity: 0.7; font-size: 11px;">
+            ℹ️ Google Drive Senkronizasyonu Kapalı<br>
+            <span style="font-size:9px; color:var(--muted)">Bu özelliği kullanmak için
+              <code>GOOGLE_SERVICE_ACCOUNT_JSON</code> çevresel değişkenini ayarlamanız gerekmektedir. Şimdilik Manuel
+              Yükleme, YouTube ve Site sekmelerini kullanabilirsiniz.</span>
           </div>
           <div id="driveConfigured" style="display:none">
             <input type="text" id="driveFolderId" placeholder="Özel Klasör ID (Boşsa env değişkeni kullanılır)"
@@ -1766,15 +1768,19 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
       for (const f of files) {
         const mb = f.size / 1024 / 1024;
         if (mb > 15) { toast(`"${f.name}" çok büyük (${mb.toFixed(1)} MB)`, 'w'); continue; }
-        prog.textContent = `Yükleniyor: ${f.name} (${mb.toFixed(1)} MB)...`;
+        prog.innerHTML = `⏳ <b>İşleniyor:</b> ${f.name} (${mb.toFixed(1)} MB)<br><span style="color:var(--muted)">Metinler okunuyor ve veritabanı için vektörleri çıkarılıyor. Dosya boyutuna göre birkaç saniye/dakika sürebilir...</span>`;
         const fd = new FormData(); fd.append('file', f);
         fd.append('folder_id', folderId);
         try {
           const res = await fetch('/upload', { method: 'POST', body: fd });
           const d = await res.json();
           if (!res.ok) throw new Error(d.detail);
+          prog.innerHTML = `✅ <b>Başarılı:</b> ${f.name} yüklendi.`;
           toast(d.message, 's');
-        } catch (e) { toast(e.message, 'e'); }
+        } catch (e) {
+          prog.innerHTML = `❌ <b>Hata:</b> ${e.message}`;
+          toast(e.message, 'e');
+        }
       }
       prog.style.display = 'none'; loadDocs();
     }
@@ -1792,11 +1798,11 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
       if (urls.length === 0) return toast('En az 1 URL girin', 'e');
 
       document.getElementById('addUrlBtn').disabled = true;
-      document.getElementById('addUrlBtn').textContent = 'İşleniyor...';
+      document.getElementById('addUrlBtn').innerHTML = '⏳ Vektörler Çıkarılıyor... Lütfen Bekleyin';
       let successCount = 0;
 
       for (const url of urls) {
-        toast(`${url.slice(0, 30)}... işleniyor`, 'i');
+        toast(`${url.slice(0, 30)}... okunuyor ve yz. vektörleri çıkarılıyor`, 'i');
         const fd = new FormData();
         fd.append('url', url);
         if (folderId !== "f_default") fd.append('folder_id', folderId);
