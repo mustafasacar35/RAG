@@ -484,26 +484,25 @@ def yt_video_id(url: str) -> Optional[str]:
     return None
 
 def fetch_yt(vid: str) -> tuple[str, str]:
+    import subprocess
+    import sys
     try:
-        # Önce videodaki tüm dilleri listele
-        transcript_list = YouTubeTranscriptApi.list_transcripts(vid)
+        cmd = [sys.executable, "-m", "youtube_transcript_api", vid, "--format", "json"]
         
-        try:
-            # Türkçe veya İngilizce manuel/otomatik altyazı bulmaya çalış
-            transcript = transcript_list.find_transcript(['tr', 'en'])
-        except Exception:
-            # Bulamazsa bulduğun ilk dildeki altyazıyı getir ve Türkçeye çevirt (veya olduğu gibi al)
-            try:
-                # Get the first available transcript
-                transcript = list(transcript_list)[0]
-                if getattr(transcript, 'language_code', '') != 'tr': # Avoid error if attribute missing
-                   transcript = transcript.translate('tr')
-            except Exception:
-                # If everything fails, just grab any available transcript as a fallback
-                transcript = list(transcript_list)[0]
-
-        data = transcript.fetch()
-        text = " ".join([i.get("text", "") for i in data])
+        # Windows'ta konsol penceresi açılmaması için
+        kwargs = {}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+            
+        res = subprocess.run(cmd, capture_output=True, text=True, check=True, **kwargs)
+        data = json.loads(res.stdout)
+        
+        if isinstance(data, list) and len(data) > 0 and isinstance(data[0], list):
+            items = data[0]
+        else:
+            items = data
+            
+        text = " ".join([i.get("text", "") for i in items])
         text = re.sub(r"\s+", " ", re.sub(r"\[.*?\]", "", text)).strip()
         
     except Exception as e:
