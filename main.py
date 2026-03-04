@@ -124,11 +124,10 @@ def chunk_text(text: str, size: int = 800, overlap: int = 150) -> list[str]:
 
 async def get_embedding(text: str, api_key: str) -> list[float]:
     try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={api_key.strip()}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/embedding-001:embedContent?key={api_key.strip()}"
         payload = {
-            "model": "models/text-embedding-004",
-            "content": {"parts": [{"text": text[:8000]}]},
-            "outputDimensionality": 768
+            "model": "models/embedding-001",
+            "content": {"parts": [{"text": text[:8000]}]}
         }
         res = await asyncio.to_thread(lambda: requests.post(url, json=payload, timeout=10))
         res_json = res.json()
