@@ -127,7 +127,8 @@ async def get_embedding(text: str, api_key: str) -> list[float]:
         response = await asyncio.to_thread(
             client.models.embed_content,
             model='gemini-embedding-001',
-            contents=text[:8000]
+            contents=text[:8000],
+            config=types.EmbedContentConfig(output_dimensionality=768)
         )
         return response.embeddings[0].values
     except Exception as e:
