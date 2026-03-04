@@ -122,14 +122,18 @@ def chunk_text(text: str, size: int = 800, overlap: int = 150) -> list[str]:
     return [c for c in chunks if len(c.strip()) > 50]
 
 async def get_embedding(text: str, api_key: str) -> list[float]:
-    client = genai.Client(api_key=api_key)
     try:
-        response = await asyncio.to_thread(
-            client.models.embed_content,
-            model='gemini-embedding-001',
-            contents=text[:8000]
-        )
-        return response.embeddings[0].values
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={api_key}"
+        payload = {
+            "model": "models/text-embedding-004",
+            "content": {"parts": [{"text": text[:8000]}]},
+            "outputDimensionality": 768
+        }
+        res = await asyncio.to_thread(lambda: requests.post(url, json=payload, timeout=10))
+        res_json = res.json()
+        if "error" in res_json:
+            raise Exception(res_json["error"].get("message", "API Error"))
+        return res_json["embedding"]["values"]
     except Exception as e:
         import traceback
         with open("error_log.txt", "a", encoding="utf-8") as f:
