@@ -135,12 +135,12 @@ async def get_embedding(text: str, api_key: str) -> list[float]:
         )
         vals = response.embeddings[0].values
     except Exception as e:
-        logging.warning(f"text-embedding-004 target failed, falling back to older model: {e}")
+        logging.warning(f"text-embedding-004 hedefi başarsız, yedek modele geçiliyor (gemini-embedding-001): {e}")
         try:
             # 2. Fallback to older gemini model format
             response = await asyncio.to_thread(
                 client.models.embed_content,
-                model='models/embedding-001',
+                model='gemini-embedding-001',
                 contents=text[:8000]
             )
             vals = response.embeddings[0].values
