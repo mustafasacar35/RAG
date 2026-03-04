@@ -41,7 +41,7 @@ app = FastAPI(title="RAG API")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://kkzommsulkxccrcmhtnq.supabase.co")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "sb_publishable_89yPcdQ8j-rY7GJrUCfQpg_FGcmpeO_")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtrem9tbXN1bGt4Y2NyY21odG5xIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI1NjU3MTQsImV4cCI6MjA4ODE0MTcxNH0.PROlh1JVQkylMcGuwyoBzxrE2z_o_dIYa_HGM8hAKHs")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Job store: crawl_jobs[job_id] = {...}
