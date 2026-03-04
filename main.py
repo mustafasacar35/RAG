@@ -123,22 +123,38 @@ def chunk_text(text: str, size: int = 800, overlap: int = 150) -> list[str]:
     return [c for c in chunks if len(c.strip()) > 50]
 
 async def get_embedding(text: str, api_key: str) -> list[float]:
+    client = genai.Client(api_key=api_key.strip())
+    
     try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={api_key.strip()}"
-        payload = {
-            "model": "models/text-embedding-004",
-            "content": {"parts": [{"text": text[:8000]}]},
-            "outputDimensionality": 768
-        }
-        res = await asyncio.to_thread(lambda: requests.post(url, json=payload, timeout=10))
-        res_json = res.json()
-        if "error" in res_json:
-            raise Exception(res_json["error"].get("message", "API Error"))
-        return res_json["embedding"]["values"]
+        # 1. Try text-embedding-004 with native 768 config
+        response = await asyncio.to_thread(
+            client.models.embed_content,
+            model='text-embedding-004',
+            contents=text[:8000],
+            config=types.EmbedContentConfig(output_dimensionality=768)
+        )
+        vals = response.embeddings[0].values
     except Exception as e:
-        import traceback
-        logging.error(f"Embedding API Error:\n{traceback.format_exc()}")
-        raise
+        logging.warning(f"text-embedding-004 target failed, falling back to older model: {e}")
+        try:
+            # 2. Fallback to older gemini model format
+            response = await asyncio.to_thread(
+                client.models.embed_content,
+                model='models/embedding-001',
+                contents=text[:8000]
+            )
+            vals = response.embeddings[0].values
+        except Exception as fallback_e:
+            logging.error(f"Embedding API Error:\n{fallback_e}")
+            raise Exception(f"Tüm modeller başarısız oldu: {str(fallback_e)}")
+            
+    # Force strictly 768 dimensions (Truncate if 3072; Pad with 0s if short)
+    if len(vals) > 768:
+        vals = vals[:768]
+    elif len(vals) < 768:
+        vals = vals + [0.0] * (768 - len(vals))
+        
+    return vals
 
 async def gemini_chat(prompt: str, system_prompt: str, api_key: str) -> str:
     client = genai.Client(api_key=api_key)
