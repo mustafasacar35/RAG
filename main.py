@@ -180,6 +180,7 @@ async def index_chunks(chunks: list[str], source: str, meta: dict, api_key: str)
             res = await asyncio.to_thread(lambda: supabase.table("documents").insert(records).execute())
         except Exception as e:
             logging.error(f"Supabase insert error: {e}")
+            raise HTTPException(500, f"Veritabanı kayıt hatası (Supabase): {str(e)[:200]}")
             
     return len(records)
 
