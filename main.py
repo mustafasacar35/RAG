@@ -327,27 +327,20 @@ def extract_text_from_drive_file(data: bytes, mime: str) -> str:
     return ""
 
 def get_indexed_drive_ids() -> set[str]:
-    """ChromaDB'deki Drive kaynaklı dosya ID'lerini döner."""
-    if collection.count() == 0:
+    """Supabase'deki Drive kaynaklı dosya ID'lerini döner."""
+    try:
+        res = supabase.table("documents").select("metadata").eq("metadata->>type", "drive").execute()
+        return {d["metadata"]["drive_id"] for d in res.data if d.get("metadata", {}).get("drive_id")}
+    except Exception as e:
+        logging.error(f"Error getting indexed drive ids: {e}")
         return set()
-    items = collection.get(include=["metadatas"])
-    ids = set()
-    for m in items["metadatas"]:
-        if m.get("type") == "drive" and m.get("drive_id"):
-            ids.add(m["drive_id"])
-    return ids
 
 def remove_drive_file_from_index(drive_id: str):
-    """Belirli bir Drive dosyasının tüm chunk'larını ChromaDB'den siler."""
-    if collection.count() == 0:
-        return
-    items = collection.get(include=["metadatas"])
-    ids_to_delete = []
-    for idx, m in enumerate(items["metadatas"]):
-        if m.get("drive_id") == drive_id:
-            ids_to_delete.append(items["ids"][idx])
-    if ids_to_delete:
-        collection.delete(ids=ids_to_delete)
+    """Belirli bir Drive dosyasının tüm chunk'larını Supabase'den siler."""
+    try:
+        supabase.table("documents").delete().eq("metadata->>drive_id", drive_id).execute()
+    except Exception as e:
+        logging.error(f"Error removing drive file from index: {e}")
 
 async def sync_drive_folder(api_key: str, drive_folder_id: Optional[str] = None):
     """Drive klasörünü senkronize eder → yeni/değişen dosyaları indexler, silinenleri kaldırır."""
@@ -395,11 +388,16 @@ async def sync_drive_folder(api_key: str, drive_folder_id: Optional[str] = None)
 
         # Mevcut index'teki dosya modifiedTime'larını kontrol et
         indexed_times = {}
-        if collection.count() > 0:
-            items = collection.get(include=["metadatas"])
-            for m in items["metadatas"]:
-                if m.get("type") == "drive" and m.get("drive_id"):
+        items_res_data = []
+        try:
+            res = await asyncio.to_thread(lambda: supabase.table("documents").select("metadata").eq("metadata->>type", "drive").execute())
+            items_res_data = res.data
+            for d in items_res_data:
+                m = d.get("metadata", {})
+                if m.get("drive_id"):
                     indexed_times[m["drive_id"]] = m.get("modified_time", "")
+        except Exception as e:
+            logging.error(f"Drive index items fetch error: {e}")
 
         synced = 0
         total_chunks = 0
@@ -415,7 +413,7 @@ async def sync_drive_folder(api_key: str, drive_folder_id: Optional[str] = None)
             if fid in indexed_times and indexed_times[fid] == mod_time:
                 # Mevcut chunk sayısını hesapla
                 existing_chunks = sum(
-                    1 for m in items["metadatas"] if m.get("drive_id") == fid
+                    1 for d in items_res_data if d.get("metadata", {}).get("drive_id") == fid
                 )
                 file_list.append({"name": fname, "chunks": existing_chunks, "drive_id": fid})
                 total_chunks += existing_chunks
@@ -736,6 +734,14 @@ async def startup_sync():
 async def serve_ui():
     return Path("static/index.html").read_text(encoding="utf-8")
 
+@app.get("/debug-db")
+async def debug_db():
+    return {
+        "supabase_url": SUPABASE_URL,
+        "supabase_key_start": SUPABASE_KEY[:15] if SUPABASE_KEY else None,
+        "python_version": sys.version
+    }
+
 # ── File upload ──────────────────────────────────────────────────────────────
 
 @app.post("/upload")
@@ -800,7 +806,10 @@ async def add_url(
             text, title = await asyncio.to_thread(fetch_yt, vid)
             source, extra = f"▶ {title}", {"type": "youtube", "url": url}
         except Exception as e:
-            raise HTTPException(400, f"YouTube transkripti alınamadı: {e}")
+            msg = str(e)
+            if "Could not retrieve a transcript" in msg or "Subtitles are disabled" in msg:
+                raise HTTPException(400, "Vercel Sunucu Engeli: YouTube, Vercel IP'lerinden gelen isteklere (bot koruması nedeniyle) engel koyuyor. Bu özellik sadece lokalde çalışır.")
+            raise HTTPException(400, f"YouTube transkripti alınamadı: {msg}")
     else:
         try:
             r      = await asyncio.to_thread(lambda: requests.get(url, timeout=15,
