@@ -397,6 +397,7 @@ async def sync_drive_folder(api_key: str, drive_folder_id: Optional[str] = None)
         "files_synced": 0,
         "total_chunks": 0,
         "files": [],
+        "force_stop": False,
     })
 
     try:
@@ -440,6 +441,13 @@ async def sync_drive_folder(api_key: str, drive_folder_id: Optional[str] = None)
         file_list = []
 
         for f in drive_files:
+            if drive_sync_status.get("force_stop"):
+                drive_sync_status.update({
+                    "status": "done",
+                    "message": "⚠️ Senkronizasyon kullanıcı tarafından durduruldu."
+                })
+                break
+
             fid = f['id']
             fname = f['name']
             mime = f.get('mimeType', '')
@@ -1394,6 +1402,14 @@ async def sync_drive(
     folder_id_to_sync = folder_id or GOOGLE_DRIVE_FOLDER_ID
     background_tasks.add_task(sync_drive_folder, api_key, folder_id_to_sync)
     return {"message": "🔄 Drive sync başlatıldı"}
+
+@app.post("/stop-drive")
+async def stop_drive(x_api_key: Optional[str] = Header(None)):
+    """Çalışan Drive sync işlemini durdurur."""
+    if drive_sync_status["status"] == "running":
+        drive_sync_status["force_stop"] = True
+        return {"message": "Durdurma sinyali gönderildi"}
+    return {"message": "Çalışan aktif bir senkronizasyon yok"}
 
 @app.get("/drive-status")
 async def get_drive_status():

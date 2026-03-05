@@ -1705,7 +1705,9 @@
             <input type="text" id="driveFolderId" placeholder="Özel Klasör ID (Boşsa env değişkeni kullanılır)"
               style="width:100%; margin-bottom:6px; padding:6px; font-size:10px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px;">
             <button class="btn btn-b btn-full" onclick="triggerDriveSync()" id="driveSyncBtn">🔄 Drive Sync</button>
-            <div class="drive-status" id="driveStatusBox" style="display:none">
+            <button class="btn btn-danger btn-full" onclick="stopDriveSync()" id="driveStopBtn"
+              style="display:none; margin-top:5px; padding:6px;">🛑 Durdur</button>
+            <div class="drive-status" id="driveStatusBox" style="display:none; margin-top:10px;">
               <div class="drive-status-line" id="driveStatusLine">Bekleniyor...</div>
               <div class="drive-file-list" id="driveFileList"></div>
             </div>
@@ -1758,7 +1760,7 @@
     <div class="sec">
       <div class="sec-label">Gemini API Key</div>
       <div class="row">
-        <input type="password" id="apiKey" placeholder="AIza..." autocomplete="off">
+        <input type="password" id="apiKey" placeholder="AIza..." autocomplete="off" oninput="saveKeySilently()">
         <button class="btn btn-y" onclick="saveKey()">OK</button>
       </div>
       <div style="margin-top:5px;font-family:var(--mono);font-size:9px;color:var(--muted)">
@@ -1851,6 +1853,14 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
         opts.headers = { ...(opts.headers || {}), 'X-API-Key': apiKey };
       return _fetch(url, opts);
     };
+
+    function saveKeySilently() {
+      const k = document.getElementById('apiKey').value.trim();
+      if (k) {
+        apiKey = k;
+        localStorage.setItem('g_key', k);
+      }
+    }
 
     function saveKey() {
       apiKey = document.getElementById('apiKey').value.trim();
@@ -2792,7 +2802,8 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
         line.innerHTML = `${esc(d.message)}<br><span style="color:var(--muted)">Son sync: ${lastSync}</span>`;
         clearInterval(driveStatusInterval);
         driveStatusInterval = null;
-        loadFolders();
+        document.getElementById('driveStopBtn').style.display = 'none';
+        loadDocs();
       } else if (d.status === 'error') {
         btn.disabled = false;
         btn.textContent = '🔄 Tekrar Dene';
@@ -2837,9 +2848,18 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
         toast(d.message, 'i');
         document.getElementById('driveSyncBtn').disabled = true;
         document.getElementById('driveSyncBtn').innerHTML = '<span class="sync-spinner"></span> Sync çalışıyor...';
+        document.getElementById('driveStopBtn').style.display = 'block';
         document.getElementById('driveStatusBox').style.display = 'block';
         document.getElementById('driveStatusLine').innerHTML = '<span class="sync-spinner"></span> Başlatılıyor...';
         driveStatusInterval = setInterval(pollDriveStatus, 2000);
+      } catch (e) { toast(e.message, 'e'); }
+    }
+
+    async function stopDriveSync() {
+      try {
+        const res = await fetch('/stop-drive', { method: 'POST', headers: { 'x-api-key': apiKey } });
+        const d = await res.json();
+        toast(d.message || 'Durdurma isteği gönderildi', 'i');
       } catch (e) { toast(e.message, 'e'); }
     }
 
