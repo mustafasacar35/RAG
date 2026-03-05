@@ -459,19 +459,30 @@ async def sync_drive_folder(api_key: str, drive_folder_id: Optional[str] = None)
         total_chunks = 0
         file_list = []
 
-        # DEBUG LOG
-        dbg = open("__sync_debug.log", "w", encoding="utf-8")
-        dbg.write(f"=== SYNC START === {datetime.now().isoformat()}\n")
-        dbg.write(f"Total drive_files from Google: {len(drive_files)}\n")
-        dbg.write(f"Already indexed IDs: {len(indexed_ids)}\n")
-        dbg.write(f"Already indexed times: {len(indexed_times)}\n")
-        dbg.write(f"API key (first 10): {api_key[:10] if api_key else 'NONE'}\n\n")
-        dbg.flush()
+        # DEBUG LOG (use /tmp for Vercel compatibility)
+        try:
+            import tempfile
+            _dbg_path = os.path.join(tempfile.gettempdir(), "__sync_debug.log")
+            dbg = open(_dbg_path, "w", encoding="utf-8")
+        except:
+            dbg = None
+
+        def _dbg(msg):
+            if dbg:
+                try:
+                    dbg.write(msg + "\n")
+                    dbg.flush()
+                except:
+                    pass
+        _dbg(f"=== SYNC START === {datetime.now().isoformat()}")
+        _dbg(f"Total drive_files from Google: {len(drive_files)}")
+        _dbg(f"Already indexed IDs: {len(indexed_ids)}")
+        _dbg(f"Already indexed times: {len(indexed_times)}")
+        _dbg(f"API key (first 10): {api_key[:10] if api_key else 'NONE'}")
 
         for i, f in enumerate(drive_files):
             if drive_sync_status.get("force_stop"):
-                dbg.write(f"[{i}] FORCE_STOP triggered\n")
-                dbg.flush()
+                _dbg(f"[{i}] FORCE_STOP triggered")
                 drive_sync_status.update({
                     "status": "done",
                     "message": "⚠️ Senkronizasyon kullanıcı tarafından durduruldu."
@@ -483,8 +494,7 @@ async def sync_drive_folder(api_key: str, drive_folder_id: Optional[str] = None)
             mime = f.get('mimeType', '')
             mod_time = f.get('modifiedTime', '')
 
-            dbg.write(f"[{i}] FILE: {fname} | mime={mime} | fid={fid[:8]}... | mod={mod_time}\n")
-            dbg.flush()
+            _dbg(f"[{i}] FILE: {fname} | mime={mime} | fid={fid[:8]}...")
 
             # Zaten indexlenmiş ve değişmemiş → atla
             if fid in indexed_times and indexed_times[fid] == mod_time:
@@ -493,37 +503,30 @@ async def sync_drive_folder(api_key: str, drive_folder_id: Optional[str] = None)
                 )
                 file_list.append({"name": fname, "chunks": existing_chunks, "drive_id": fid})
                 total_chunks += existing_chunks
-                dbg.write(f"  → SKIP (already indexed, {existing_chunks} chunks)\n")
-                dbg.flush()
+                _dbg(f"  → SKIP (already indexed, {existing_chunks} chunks)")
                 continue
 
             # Değişmiş dosya → eski chunk'ları sil
             if fid in indexed_ids:
-                dbg.write(f"  → DELETE old chunks (changed file)\n")
-                dbg.flush()
+                _dbg(f"  → DELETE old chunks (changed file)")
                 await asyncio.to_thread(remove_drive_file_from_index, fid)
 
             drive_sync_status["message"] = f"İndiriliyor: {fname}..."
 
             try:
-                dbg.write(f"  → DOWNLOADING...\n")
-                dbg.flush()
+                _dbg(f"  → DOWNLOADING...")
                 data = await asyncio.to_thread(download_drive_file, service, f)
-                dbg.write(f"  → Downloaded {len(data)} bytes\n")
-                dbg.flush()
+                _dbg(f"  → Downloaded {len(data)} bytes")
 
                 text = extract_text_from_drive_file(data, mime)
-                dbg.write(f"  → Extracted text length: {len(text)} chars\n")
-                dbg.flush()
+                _dbg(f"  → Extracted text length: {len(text)} chars")
 
                 if not text.strip():
-                    dbg.write(f"  → SKIP (empty text after extraction)\n")
-                    dbg.flush()
+                    _dbg(f"  → SKIP (empty text after extraction)")
                     continue
 
                 chunks = chunk_text(text)
-                dbg.write(f"  → Chunked into {len(chunks)} pieces, indexing...\n")
-                dbg.flush()
+                _dbg(f"  → Chunked into {len(chunks)} pieces, indexing...")
 
                 n = await index_chunks(
                     chunks, f"📁 {fname}",
@@ -533,8 +536,7 @@ async def sync_drive_folder(api_key: str, drive_folder_id: Optional[str] = None)
                 synced += 1
                 total_chunks += n
                 file_list.append({"name": fname, "chunks": n, "drive_id": fid})
-                dbg.write(f"  → SUCCESS: indexed {n} chunks (synced total: {synced})\n")
-                dbg.flush()
+                _dbg(f"  → SUCCESS: indexed {n} chunks (synced total: {synced})")
 
                 drive_sync_status.update({
                     "files_synced": synced,
@@ -542,55 +544,39 @@ async def sync_drive_folder(api_key: str, drive_folder_id: Optional[str] = None)
                     "message": f"Indexlendi: {fname} ({n} parça)",
                 })
             except Exception as e:
-                dbg.write(f"  → ERROR: {type(e).__name__}: {e}\n")
-                dbg.flush()
+                _dbg(f"  → ERROR: {type(e).__name__}: {e}")
                 logging.warning(f"Drive dosyası işlenemedi: {fname} — {e}")
                 continue
 
-        dbg.write(f"\n=== LOOP END ===\n")
-        dbg.write(f"file_list count: {len(file_list)}\n")
-        dbg.write(f"file_list names: {[fl['name'] for fl in file_list]}\n")
-        dbg.write(f"synced (new): {synced}, total_chunks: {total_chunks}\n\n")
-        dbg.flush()
+        _dbg(f"=== LOOP END === file_list={len(file_list)}, synced={synced}")
 
         if file_list:
             try:
                 folders = load_folders()
-                dbg.write(f"Loaded {len(folders)} folders from DB\n")
+                _dbg(f"Loaded {len(folders)} folders from DB")
                 found_default = False
                 save_needed = False
                 for fold in folders:
                     if fold["id"] == "f_default":
                         found_default = True
                         existing_docs = fold.get("docs", [])
-                        dbg.write(f"f_default existing docs count: {len(existing_docs)}\n")
                         for fn in file_list:
                             doc_name = f"📁 {fn['name']}"
                             if doc_name not in existing_docs:
                                 fold.setdefault("docs", []).append(doc_name)
                                 save_needed = True
-                                dbg.write(f"  + Adding: {doc_name}\n")
-                            else:
-                                dbg.write(f"  = Already in folder: {doc_name}\n")
                         break
-                if not found_default:
-                    dbg.write("WARNING: f_default folder NOT FOUND in DB!\n")
-                dbg.write(f"save_needed: {save_needed}\n")
-                dbg.flush()
                 if save_needed:
                     save_folders(folders)
-                    dbg.write("save_folders() called successfully\n")
-                else:
-                    dbg.write("save_folders() NOT called (no new docs)\n")
+                    _dbg("save_folders() called successfully")
             except Exception as e:
-                dbg.write(f"FOLDER SAVE ERROR: {e}\n")
+                _dbg(f"FOLDER SAVE ERROR: {e}")
                 logging.warning(f"Klasör güncellenirken hata: {e}")
-        else:
-            dbg.write("file_list is EMPTY — no folder update needed\n")
 
-        dbg.write(f"\n=== SYNC DONE === {datetime.now().isoformat()}\n")
-        dbg.flush()
-        dbg.close()
+        _dbg(f"=== SYNC DONE === {datetime.now().isoformat()}")
+        if dbg:
+            try: dbg.close()
+            except: pass
 
         drive_sync_status.update({
             "status": "done",
