@@ -2792,7 +2792,7 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
         line.innerHTML = `${esc(d.message)}<br><span style="color:var(--muted)">Son sync: ${lastSync}</span>`;
         clearInterval(driveStatusInterval);
         driveStatusInterval = null;
-        loadDocs();
+        loadFolders();
       } else if (d.status === 'error') {
         btn.disabled = false;
         btn.textContent = '🔄 Tekrar Dene';
