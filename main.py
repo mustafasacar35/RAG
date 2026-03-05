@@ -135,12 +135,12 @@ async def get_embedding(text: str, api_key: str) -> list[float]:
         )
         vals = response.embeddings[0].values
     except Exception as e:
-        logging.warning(f"text-embedding-004 hedefi başarsız, yedek modele geçiliyor (gemini-embedding-001): {e}")
+        logging.warning(f"text-embedding-004 target failed, falling back to older model: {e}")
         try:
             # 2. Fallback to older gemini model format
             response = await asyncio.to_thread(
                 client.models.embed_content,
-                model='gemini-embedding-001',
+                model='models/embedding-001',
                 contents=text[:8000]
             )
             vals = response.embeddings[0].values
@@ -301,6 +301,23 @@ def list_drive_files(service, folder_id: str) -> list[dict]:
             break
     return results
 
+def fetch_all_docs_sync(select_cols: str, filter_col: str = None, filter_val: str = None) -> list[dict]:
+    """Supabase'in 1000 limitini aşmak için verileri sayfalayarak getirir."""
+    all_data = []
+    offset = 0
+    limit = 1000
+    while True:
+        q = supabase.table("documents").select(select_cols)
+        if filter_col and filter_val:
+            q = q.eq(filter_col, filter_val)
+        res = q.range(offset, offset + limit - 1).execute()
+        data = res.data or []
+        all_data.extend(data)
+        if len(data) < limit:
+            break
+        offset += limit
+    return all_data
+
 def resolve_drive_folder_id(service, folder_input: str) -> str:
     """Kullanıcı klasör ismi girdiyse ID'sini bulur, ID girdiyse aynen döner."""
     folder_input = folder_input.strip()
@@ -349,8 +366,8 @@ def extract_text_from_drive_file(data: bytes, mime: str) -> str:
 def get_indexed_drive_ids() -> set[str]:
     """Supabase'deki Drive kaynaklı dosya ID'lerini döner."""
     try:
-        res = supabase.table("documents").select("metadata").eq("metadata->>type", "drive").execute()
-        return {d["metadata"]["drive_id"] for d in res.data if d.get("metadata", {}).get("drive_id")}
+        res_data = fetch_all_docs_sync("metadata", "metadata->>type", "drive")
+        return {d["metadata"]["drive_id"] for d in res_data if d.get("metadata", {}).get("drive_id")}
     except Exception as e:
         logging.error(f"Error getting indexed drive ids: {e}")
         return set()
@@ -410,8 +427,7 @@ async def sync_drive_folder(api_key: str, drive_folder_id: Optional[str] = None)
         indexed_times = {}
         items_res_data = []
         try:
-            res = await asyncio.to_thread(lambda: supabase.table("documents").select("metadata").eq("metadata->>type", "drive").execute())
-            items_res_data = res.data
+            items_res_data = await asyncio.to_thread(fetch_all_docs_sync, "metadata", "metadata->>type", "drive")
             for d in items_res_data:
                 m = d.get("metadata", {})
                 if m.get("drive_id"):
@@ -1129,15 +1145,14 @@ def save_folders(data: list[dict]):
 async def get_folders():
     folders = load_folders()
     
-    # Supabase'den belge kaynaklarını getir (select distinct source gibi)
-    # Ancak Supabase REST'te distinct zor. Şimdilik düz select yapıp python'da gruplayalım
-    docs_res = await asyncio.to_thread(lambda: supabase.table("documents").select("source, metadata").execute())
+    # Tüm belge kaynaklarını getir (1000 limitini aşmak için fetch_all_docs_sync kullanılıyor)
+    docs_data = await asyncio.to_thread(fetch_all_docs_sync, "source, metadata")
     
-    if not docs_res.data:
+    if not docs_data:
         return {"folders": folders, "total_chunks": 0}
         
     srcs: dict[str, dict] = {}
-    for d in docs_res.data:
+    for d in docs_data:
         s = d["source"]
         if s not in srcs:
             m = d.get("metadata", {})
