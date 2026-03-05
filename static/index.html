@@ -2690,7 +2690,11 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
         fd.append('top_k', document.getElementById('topK').value);
         const sel = getSelectedSources();
         if (sel) fd.append('selected_sources', sel);
-        const res = await fetch('/query', { method: 'POST', body: fd });
+        const res = await fetch('/query', {
+          method: 'POST',
+          body: fd,
+          headers: { 'x-api-key': apiKey }
+        });
         const d = await res.json();
         document.getElementById(tid)?.remove();
         if (!res.ok) throw new Error(d.detail);
@@ -2820,10 +2824,14 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
 
       const fdId = document.getElementById('driveFolderId')?.value.trim() || '';
       const fd = new FormData();
-      if (fdId) fd.append('folder_id', fdId);
+      fd.append('folder_id', fdId || '');
 
       try {
-        const res = await fetch('/sync-drive', { method: 'POST', body: fd });
+        const res = await fetch('/sync-drive', {
+          method: 'POST',
+          body: fd,
+          headers: { 'x-api-key': apiKey }
+        });
         const d = await res.json();
         if (!res.ok) throw new Error(d.detail);
         toast(d.message, 'i');
