@@ -123,7 +123,10 @@ def chunk_text(text: str, size: int = 800, overlap: int = 150) -> list[str]:
     return [c for c in chunks if len(c.strip()) > 50]
 
 async def get_embedding(text: str, api_key: str) -> list[float]:
-    client = genai.Client(api_key=api_key.strip())
+    clean_key = api_key.strip()
+    with open("__debug_key.txt", "w") as f:
+        f.write(f"LEN: {len(clean_key)}, STR: {clean_key}\n")
+    client = genai.Client(api_key=clean_key)
     
     try:
         # 1. Try text-embedding-004 with native 768 config
@@ -307,15 +310,20 @@ def fetch_all_docs_sync(select_cols: str, filter_col: str = None, filter_val: st
     offset = 0
     limit = 1000
     while True:
-        q = supabase.table("documents").select(select_cols)
-        if filter_col and filter_val:
-            q = q.eq(filter_col, filter_val)
-        res = q.range(offset, offset + limit - 1).execute()
-        data = res.data or []
-        all_data.extend(data)
-        if len(data) < limit:
+        try:
+            q = supabase.table("documents").select(select_cols)
+            if filter_col and filter_val:
+                q = q.eq(filter_col, filter_val)
+            # Supabase range is inclusive
+            res = q.range(offset, offset + limit - 1).execute()
+            data = res.data or []
+            all_data.extend(data)
+            if len(data) < limit:
+                break
+            offset += limit
+        except Exception as e:
+            logging.error(f"fetch_all_docs_sync pagination error at offset {offset}: {e}")
             break
-        offset += limit
     return all_data
 
 def resolve_drive_folder_id(service, folder_input: str) -> str:
@@ -495,7 +503,7 @@ async def sync_drive_folder(api_key: str, drive_folder_id: Optional[str] = None)
 
         if file_list:
             try:
-                folders = await asyncio.to_thread(load_folders)
+                folders = load_folders()
                 save_needed = False
                 for fold in folders:
                     if fold["id"] == "f_default":
@@ -506,7 +514,7 @@ async def sync_drive_folder(api_key: str, drive_folder_id: Optional[str] = None)
                                 save_needed = True
                         break
                 if save_needed:
-                    await asyncio.to_thread(save_folders, folders)
+                    save_folders(folders)
             except Exception as e:
                 logging.warning(f"Klasör güncellenirken hata: {e}")
 
@@ -1157,6 +1165,7 @@ async def get_folders():
     docs_data = await asyncio.to_thread(fetch_all_docs_sync, "source, metadata")
     
     if not docs_data:
+        logging.info("get_folders: docs_data is EMPTY from Supabase.")
         return {"folders": folders, "total_chunks": 0}
         
     srcs: dict[str, dict] = {}
@@ -1168,6 +1177,7 @@ async def get_folders():
         srcs[s]["chunks"] += 1
     
     all_docs = list(srcs.values())
+    logging.info(f"get_folders: Found {len(all_docs)} unique documents in DB (docs_data count = {len(docs_data)})")
     
     # Hangi belge hangi klasörde bulalım
     assigned_docs = set()
