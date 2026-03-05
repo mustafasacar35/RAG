@@ -2100,11 +2100,27 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
 
     async function loadHistory() {
       try {
-        const res = await fetch('/history');
-        const data = await res.json();
-        chatHistory = data;
+        const stored = localStorage.getItem('rag_history');
+        chatHistory = stored ? JSON.parse(stored) : [];
         renderHistory();
-      } catch (e) { }
+      } catch (e) { chatHistory = []; renderHistory(); }
+    }
+
+    function saveHistoryToStorage() {
+      try {
+        // Keep only last 50, strip chunk text to save space
+        const slim = chatHistory.slice(0, 50).map(h => ({
+          id: h.id,
+          question: h.question,
+          answer: h.answer,
+          timestamp: h.timestamp,
+          chunk_details: (h.chunk_details || []).map(c => ({
+            id: c.id, source: c.source, score: c.score,
+            text: (c.text || '').slice(0, 300)
+          }))
+        }));
+        localStorage.setItem('rag_history', JSON.stringify(slim));
+      } catch (e) { console.warn('History save error:', e); }
     }
 
     function renderHistory() {
@@ -2145,16 +2161,10 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
 
     async function deleteHistoryItem(id) {
       if (!confirm("Bu geçmiş kaydını silmek istediğinize emin misiniz?")) return;
-      try {
-        const res = await fetch(`/history/${id}`, { method: 'DELETE' });
-        const d = await res.json();
-        if (!res.ok) throw new Error(d.detail);
-        toast(d.message, 's');
-        chatHistory = chatHistory.filter(h => h.id !== id);
-        renderHistory();
-      } catch (e) {
-        toast(e.message, 'e');
-      }
+      chatHistory = chatHistory.filter(h => h.id !== id);
+      saveHistoryToStorage();
+      renderHistory();
+      toast('Geçmiş kaydı silindi', 's');
     }
 
     async function loadHistoryItem(id) {
@@ -2179,10 +2189,13 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
       chat.scrollTop = chat.scrollHeight;
 
       // Geçmişte öne al
-      try {
-        await fetch(`/history/${id}/touch`, { method: 'POST' });
-        loadHistory(); // Listeyi yenile
-      } catch (e) { }
+      const idx = chatHistory.findIndex(h => h.id === id);
+      if (idx > 0) {
+        const item2 = chatHistory.splice(idx, 1)[0];
+        chatHistory.unshift(item2);
+        saveHistoryToStorage();
+        renderHistory();
+      }
     }
 
     function formatCitations(text) {
@@ -2641,16 +2654,15 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
     // ── New Chat ──────────────────────────────────────────────────────────────
     function startNewChat() {
       const chat = document.getElementById('chatArea');
-      // Eğer sohbet alanında mesaj varsa temizle
       chat.innerHTML = `
         <div class="welcome" id="welcome">
           <div class="welcome-icon">🧠</div>
           <h2>RAG Engine v4</h2>
           <p>Dosya · YouTube · URL · Katmanlı Site Tarama<br>Her katmanda 50 sayfa · Otomatik + Manuel kontrol<br>Gemini API · Ücretsiz</p>
         </div>`;
-      // Chunk detaylarını sıfırla
       lastChunkDetails = [];
       lastAiAnswer = '';
+      loadHistory();
       toast('Yeni sohbet başlatıldı ✨', 's');
     }
 
@@ -2697,7 +2709,18 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
            <div class="bubble">${answerFormatted}</div>
            ${tags}
          </div>`);
-        loadHistory();
+
+        // Save to localStorage history
+        const histItem = {
+          id: 'h' + Date.now(),
+          question: q,
+          answer: d.answer,
+          timestamp: new Date().toISOString(),
+          chunk_details: d.chunk_details || []
+        };
+        chatHistory.unshift(histItem);
+        saveHistoryToStorage();
+        renderHistory();
       } catch (e) {
         document.getElementById(tid)?.remove();
         chat.insertAdjacentHTML('beforeend',
