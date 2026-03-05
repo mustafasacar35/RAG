@@ -140,7 +140,7 @@ async def get_embedding(text: str, api_key: str) -> list[float]:
             # 2. Fallback to older gemini model format
             response = await asyncio.to_thread(
                 client.models.embed_content,
-                model='models/embedding-001',
+                model='gemini-embedding-001',
                 contents=text[:8000]
             )
             vals = response.embeddings[0].values
