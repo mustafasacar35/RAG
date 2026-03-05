@@ -125,34 +125,28 @@ def chunk_text(text: str, size: int = 800, overlap: int = 150) -> list[str]:
 async def get_embedding(text: str, api_key: str) -> list[float]:
     client = genai.Client(api_key=api_key.strip())
     
-    models_to_try = [
-        'text-embedding-004',
-        'models/text-embedding-004',
-        'embedding-001',
-        'models/embedding-001'
-    ]
-    
-    vals = None
-    last_error = None
-    
-    for model_name in models_to_try:
+    try:
+        # 1. Try text-embedding-004 with native 768 config
+        response = await asyncio.to_thread(
+            client.models.embed_content,
+            model='text-embedding-004',
+            contents=text[:8000],
+            config=types.EmbedContentConfig(output_dimensionality=768)
+        )
+        vals = response.embeddings[0].values
+    except Exception as e:
+        logging.warning(f"text-embedding-004 target failed, falling back to older model: {e}")
         try:
+            # 2. Fallback to older gemini model format
             response = await asyncio.to_thread(
                 client.models.embed_content,
-                model=model_name,
-                contents=text[:8000],
-                config=types.EmbedContentConfig(output_dimensionality=768) if '004' in model_name else None
+                model='models/embedding-001',
+                contents=text[:8000]
             )
             vals = response.embeddings[0].values
-            break  # Success!
-        except Exception as e:
-            last_error = e
-            logging.info(f"Embedding model {model_name} failed: {e}")
-            continue
-            
-    if vals is None:
-        logging.error(f"Tüm embedding modelleri başarısız oldu. Son hata: {last_error}")
-        raise Exception(f"Tüm modeller başarısız oldu: 404 NOT_FOUND. API Anahtarınızın embedding yetkisi olmayabilir. ({last_error})")
+        except Exception as fallback_e:
+            logging.error(f"Embedding API Error:\n{fallback_e}")
+            raise Exception(f"Tüm modeller başarısız oldu: {str(fallback_e)}")
             
     # Force strictly 768 dimensions (Truncate if 3072; Pad with 0s if short)
     if len(vals) > 768:
