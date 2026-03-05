@@ -2772,6 +2772,8 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
       } catch (e) { }
     }
 
+    let _lastSidebarRefresh = 0;
+
     function updateDriveUI(d) {
       const box = document.getElementById('driveStatusBox');
       const line = document.getElementById('driveStatusLine');
@@ -2793,6 +2795,12 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
         line.innerHTML = `<span class="sync-spinner"></span> ${esc(d.message)}`;
         if (!driveStatusInterval) {
           driveStatusInterval = setInterval(pollDriveStatus, 2000);
+        }
+        // Her 6 saniyede bir sol paneli güncelle (canlı güncelleme)
+        const now = Date.now();
+        if (now - _lastSidebarRefresh > 6000) {
+          _lastSidebarRefresh = now;
+          loadDocs();
         }
       } else if (d.status === 'done') {
         btn.disabled = false;

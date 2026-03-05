@@ -1,0 +1,40 @@
+async def get_embedding(text: str, api_key: str) -> list[float]:
+    client = genai.Client(api_key=api_key.strip())
+    
+    try:
+        # 1. Try text-embedding-004 with native 768 config
+        response = await asyncio.to_thread(
+            client.models.embed_content,
+            model='text-embedding-004',
+            contents=text[:8000],
+            config=types.EmbedContentConfig(output_dimensionality=768)
+        )
+        vals = response.embeddings[0].values
+    except Exception as e:
+        logging.warning(f"text-embedding-004 hedefi başarsız, yedek modele geçiliyor (gemini-embedding-001): {e}")
+        try:
+            # 2. Fallback to older gemini model format
+            response = await asyncio.to_thread(
+                client.models.embed_content,
+                model='gemini-embedding-001',
+                contents=text[:8000]
+            )
+            vals = response.embeddings[0].values
+        except Exception as fallback_e:
+            logging.error(f"Embedding API Error:\n{fallback_e}")
+            raise Exception(f"Tüm modeller başarısız oldu: {str(fallback_e)}")
+            
+    # Force strictly 768 dimensions (Truncate if 3072; Pad with 0s if short)
+    if len(vals) > 768:
+        vals = vals[:768]
+    elif len(vals) < 768:
+        vals = vals + [0.0] * (768 - len(vals))
+        
+    return vals
+
+async def gemini_chat(prompt: str, system_prompt: str, api_key: str) -> str:
+    client = genai.Client(api_key=api_key)
+    response = await asyncio.to_thread(
+        client.models.generate_content,
+        model='gemini-2.5-flash',
+        contents=prompt,

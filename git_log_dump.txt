@@ -1,0 +1,3288 @@
+commit 533a9e4d15c2c9dab42489424695ea51bae17d34
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Thu Mar 5 22:08:03 2026 +0300
+
+    Revert: Remove explicit None config passing in embedding loop which broke the API calls
+
+diff --git a/main.py b/main.py
+index b11460f..860417f 100644
+--- a/main.py
++++ b/main.py
+@@ -125,34 +125,28 @@ def chunk_text(text: str, size: int = 800, overlap: int = 150) -> list[str]:
+ async def get_embedding(text: str, api_key: str) -> list[float]:
+     client = genai.Client(api_key=api_key.strip())
+     
+-    models_to_try = [
+-        'text-embedding-004',
+-        'models/text-embedding-004',
+-        'embedding-001',
+-        'models/embedding-001'
+-    ]
+-    
+-    vals = None
+-    last_error = None
+-    
+-    for model_name in models_to_try:
++    try:
++        # 1. Try text-embedding-004 with native 768 config
++        response = await asyncio.to_thread(
++            client.models.embed_content,
++            model='text-embedding-004',
++            contents=text[:8000],
++            config=types.EmbedContentConfig(output_dimensionality=768)
++        )
++        vals = response.embeddings[0].values
++    except Exception as e:
++        logging.warning(f"text-embedding-004 target failed, falling back to older model: {e}")
+         try:
++            # 2. Fallback to older gemini model format
+             response = await asyncio.to_thread(
+                 client.models.embed_content,
+-                model=model_name,
+-                contents=text[:8000],
+-                config=types.EmbedContentConfig(output_dimensionality=768) if '004' in model_name else None
++                model='models/embedding-001',
++                contents=text[:8000]
+             )
+             vals = response.embeddings[0].values
+-            break  # Success!
+-        except Exception as e:
+-            last_error = e
+-            logging.info(f"Embedding model {model_name} failed: {e}")
+-            continue
+-            
+-    if vals is None:
+-        logging.error(f"Tüm embedding modelleri başarısız oldu. Son hata: {last_error}")
+-        raise Exception(f"Tüm modeller başarısız oldu: 404 NOT_FOUND. API Anahtarınızın embedding yetkisi olmayabilir. ({last_error})")
++        except Exception as fallback_e:
++            logging.error(f"Embedding API Error:\n{fallback_e}")
++            raise Exception(f"Tüm modeller başarısız oldu: {str(fallback_e)}")
+             
+     # Force strictly 768 dimensions (Truncate if 3072; Pad with 0s if short)
+     if len(vals) > 768:
+
+commit 20cf4a12549866476a6b08c740204053515fac83
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Thu Mar 5 22:01:11 2026 +0300
+
+    Fix: Enhance embedding fallback sequence with multiple model aliases to bypass 404 NOT_FOUND errors for restricted API keys
+
+diff --git a/main.py b/main.py
+index 860417f..b11460f 100644
+--- a/main.py
++++ b/main.py
+@@ -125,28 +125,34 @@ def chunk_text(text: str, size: int = 800, overlap: int = 150) -> list[str]:
+ async def get_embedding(text: str, api_key: str) -> list[float]:
+     client = genai.Client(api_key=api_key.strip())
+     
+-    try:
+-        # 1. Try text-embedding-004 with native 768 config
+-        response = await asyncio.to_thread(
+-            client.models.embed_content,
+-            model='text-embedding-004',
+-            contents=text[:8000],
+-            config=types.EmbedContentConfig(output_dimensionality=768)
+-        )
+-        vals = response.embeddings[0].values
+-    except Exception as e:
+-        logging.warning(f"text-embedding-004 target failed, falling back to older model: {e}")
++    models_to_try = [
++        'text-embedding-004',
++        'models/text-embedding-004',
++        'embedding-001',
++        'models/embedding-001'
++    ]
++    
++    vals = None
++    last_error = None
++    
++    for model_name in models_to_try:
+         try:
+-            # 2. Fallback to older gemini model format
+             response = await asyncio.to_thread(
+                 client.models.embed_content,
+-                model='models/embedding-001',
+-                contents=text[:8000]
++                model=model_name,
++                contents=text[:8000],
++                config=types.EmbedContentConfig(output_dimensionality=768) if '004' in model_name else None
+             )
+             vals = response.embeddings[0].values
+-        except Exception as fallback_e:
+-            logging.error(f"Embedding API Error:\n{fallback_e}")
+-            raise Exception(f"Tüm modeller başarısız oldu: {str(fallback_e)}")
++            break  # Success!
++        except Exception as e:
++            last_error = e
++            logging.info(f"Embedding model {model_name} failed: {e}")
++            continue
++            
++    if vals is None:
++        logging.error(f"Tüm embedding modelleri başarısız oldu. Son hata: {last_error}")
++        raise Exception(f"Tüm modeller başarısız oldu: 404 NOT_FOUND. API Anahtarınızın embedding yetkisi olmayabilir. ({last_error})")
+             
+     # Force strictly 768 dimensions (Truncate if 3072; Pad with 0s if short)
+     if len(vals) > 768:
+
+commit b32e407984f34832039c856a905adadb7ad61b52
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Thu Mar 5 21:37:26 2026 +0300
+
+    Fix: Add paginated fetch_all_docs_sync to bypass Supabase 1000 row limits for drive sync and folders
+
+diff --git a/main.py b/main.py
+index 92d4930..860417f 100644
+--- a/main.py
++++ b/main.py
+@@ -135,12 +135,12 @@ async def get_embedding(text: str, api_key: str) -> list[float]:
+         )
+         vals = response.embeddings[0].values
+     except Exception as e:
+-        logging.warning(f"text-embedding-004 hedefi başarsız, yedek modele geçiliyor (gemini-embedding-001): {e}")
++        logging.warning(f"text-embedding-004 target failed, falling back to older model: {e}")
+         try:
+             # 2. Fallback to older gemini model format
+             response = await asyncio.to_thread(
+                 client.models.embed_content,
+-                model='gemini-embedding-001',
++                model='models/embedding-001',
+                 contents=text[:8000]
+             )
+             vals = response.embeddings[0].values
+@@ -301,6 +301,23 @@ def list_drive_files(service, folder_id: str) -> list[dict]:
+             break
+     return results
+ 
++def fetch_all_docs_sync(select_cols: str, filter_col: str = None, filter_val: str = None) -> list[dict]:
++    """Supabase'in 1000 limitini aşmak için verileri sayfalayarak getirir."""
++    all_data = []
++    offset = 0
++    limit = 1000
++    while True:
++        q = supabase.table("documents").select(select_cols)
++        if filter_col and filter_val:
++            q = q.eq(filter_col, filter_val)
++        res = q.range(offset, offset + limit - 1).execute()
++        data = res.data or []
++        all_data.extend(data)
++        if len(data) < limit:
++            break
++        offset += limit
++    return all_data
++
+ def resolve_drive_folder_id(service, folder_input: str) -> str:
+     """Kullanıcı klasör ismi girdiyse ID'sini bulur, ID girdiyse aynen döner."""
+     folder_input = folder_input.strip()
+@@ -349,8 +366,8 @@ def extract_text_from_drive_file(data: bytes, mime: str) -> str:
+ def get_indexed_drive_ids() -> set[str]:
+     """Supabase'deki Drive kaynaklı dosya ID'lerini döner."""
+     try:
+-        res = supabase.table("documents").select("metadata").eq("metadata->>type", "drive").execute()
+-        return {d["metadata"]["drive_id"] for d in res.data if d.get("metadata", {}).get("drive_id")}
++        res_data = fetch_all_docs_sync("metadata", "metadata->>type", "drive")
++        return {d["metadata"]["drive_id"] for d in res_data if d.get("metadata", {}).get("drive_id")}
+     except Exception as e:
+         logging.error(f"Error getting indexed drive ids: {e}")
+         return set()
+@@ -410,8 +427,7 @@ async def sync_drive_folder(api_key: str, drive_folder_id: Optional[str] = None)
+         indexed_times = {}
+         items_res_data = []
+         try:
+-            res = await asyncio.to_thread(lambda: supabase.table("documents").select("metadata").eq("metadata->>type", "drive").execute())
+-            items_res_data = res.data
++            items_res_data = await asyncio.to_thread(fetch_all_docs_sync, "metadata", "metadata->>type", "drive")
+             for d in items_res_data:
+                 m = d.get("metadata", {})
+                 if m.get("drive_id"):
+@@ -1129,15 +1145,14 @@ def save_folders(data: list[dict]):
+ async def get_folders():
+     folders = load_folders()
+     
+-    # Supabase'den belge kaynaklarını getir (select distinct source gibi)
+-    # Ancak Supabase REST'te distinct zor. Şimdilik düz select yapıp python'da gruplayalım
+-    docs_res = await asyncio.to_thread(lambda: supabase.table("documents").select("source, metadata").execute())
++    # Tüm belge kaynaklarını getir (1000 limitini aşmak için fetch_all_docs_sync kullanılıyor)
++    docs_data = await asyncio.to_thread(fetch_all_docs_sync, "source, metadata")
+     
+-    if not docs_res.data:
++    if not docs_data:
+         return {"folders": folders, "total_chunks": 0}
+         
+     srcs: dict[str, dict] = {}
+-    for d in docs_res.data:
++    for d in docs_data:
+         s = d["source"]
+         if s not in srcs:
+             m = d.get("metadata", {})
+
+commit 517cc82627e8c3550385eb11f43260de5d503d65
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Wed Mar 4 23:46:21 2026 +0300
+
+    Fix: Change embedding SDK fallback model from models/embedding-001 to gemini-embedding-001 to avoid API rejection
+
+diff --git a/main.py b/main.py
+index 8f2037d..92d4930 100644
+--- a/main.py
++++ b/main.py
+@@ -135,12 +135,12 @@ async def get_embedding(text: str, api_key: str) -> list[float]:
+         )
+         vals = response.embeddings[0].values
+     except Exception as e:
+-        logging.warning(f"text-embedding-004 target failed, falling back to older model: {e}")
++        logging.warning(f"text-embedding-004 hedefi başarsız, yedek modele geçiliyor (gemini-embedding-001): {e}")
+         try:
+             # 2. Fallback to older gemini model format
+             response = await asyncio.to_thread(
+                 client.models.embed_content,
+-                model='models/embedding-001',
++                model='gemini-embedding-001',
+                 contents=text[:8000]
+             )
+             vals = response.embeddings[0].values
+
+commit 18fa6bac310c4ec055a75bbfa218e0b4fa6968d3
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Wed Mar 4 23:39:51 2026 +0300
+
+    Fix: Revert get_embedding to python SDK to prevent V1Beta REST errors and force 768 output dimensions
+
+diff --git a/main.py b/main.py
+index 8487f43..8f2037d 100644
+--- a/main.py
++++ b/main.py
+@@ -123,22 +123,38 @@ def chunk_text(text: str, size: int = 800, overlap: int = 150) -> list[str]:
+     return [c for c in chunks if len(c.strip()) > 50]
+ 
+ async def get_embedding(text: str, api_key: str) -> list[float]:
++    client = genai.Client(api_key=api_key.strip())
++    
+     try:
+-        url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={api_key.strip()}"
+-        payload = {
+-            "model": "models/text-embedding-004",
+-            "content": {"parts": [{"text": text[:8000]}]},
+-            "outputDimensionality": 768
+-        }
+-        res = await asyncio.to_thread(lambda: requests.post(url, json=payload, timeout=10))
+-        res_json = res.json()
+-        if "error" in res_json:
+-            raise Exception(res_json["error"].get("message", "API Error"))
+-        return res_json["embedding"]["values"]
++        # 1. Try text-embedding-004 with native 768 config
++        response = await asyncio.to_thread(
++            client.models.embed_content,
++            model='text-embedding-004',
++            contents=text[:8000],
++            config=types.EmbedContentConfig(output_dimensionality=768)
++        )
++        vals = response.embeddings[0].values
+     except Exception as e:
+-        import traceback
+-        logging.error(f"Embedding API Error:\n{traceback.format_exc()}")
+-        raise
++        logging.warning(f"text-embedding-004 target failed, falling back to older model: {e}")
++        try:
++            # 2. Fallback to older gemini model format
++            response = await asyncio.to_thread(
++                client.models.embed_content,
++                model='models/embedding-001',
++                contents=text[:8000]
++            )
++            vals = response.embeddings[0].values
++        except Exception as fallback_e:
++            logging.error(f"Embedding API Error:\n{fallback_e}")
++            raise Exception(f"Tüm modeller başarısız oldu: {str(fallback_e)}")
++            
++    # Force strictly 768 dimensions (Truncate if 3072; Pad with 0s if short)
++    if len(vals) > 768:
++        vals = vals[:768]
++    elif len(vals) < 768:
++        vals = vals + [0.0] * (768 - len(vals))
++        
++    return vals
+ 
+ async def gemini_chat(prompt: str, system_prompt: str, api_key: str) -> str:
+     client = genai.Client(api_key=api_key)
+
+commit 154cc85dca0bd534a888c5c7059c2cb19035ccd0
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Wed Mar 4 23:28:49 2026 +0300
+
+    Fix: Append synchronized Google Drive files to the f_default folder so they immediately appear in the UI accordion
+
+diff --git a/main.py b/main.py
+index 499cde6..8487f43 100644
+--- a/main.py
++++ b/main.py
+@@ -453,6 +453,23 @@ async def sync_drive_folder(api_key: str, drive_folder_id: Optional[str] = None)
+                 logging.warning(f"Drive dosyası işlenemedi: {fname} — {e}")
+                 continue
+ 
++        if file_list:
++            try:
++                folders = await asyncio.to_thread(load_folders)
++                save_needed = False
++                for fold in folders:
++                    if fold["id"] == "f_default":
++                        for fn in file_list:
++                            doc_name = f"📁 {fn['name']}"
++                            if doc_name not in fold.get("docs", []):
++                                fold.setdefault("docs", []).append(doc_name)
++                                save_needed = True
++                        break
++                if save_needed:
++                    await asyncio.to_thread(save_folders, folders)
++            except Exception as e:
++                logging.warning(f"Klasör güncellenirken hata: {e}")
++
+         drive_sync_status.update({
+             "status": "done",
+             "last_sync": datetime.now().isoformat(),
+
+commit 91da611003d7eba890d6f7362c768e3fba0095ec
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Wed Mar 4 23:24:52 2026 +0300
+
+    Fix: Revert embedding REST API back to text-embedding-004 with 768 outputDimensionality now that local API key space issue is fixed
+
+diff --git a/main.py b/main.py
+index 324a13a..499cde6 100644
+--- a/main.py
++++ b/main.py
+@@ -124,10 +124,11 @@ def chunk_text(text: str, size: int = 800, overlap: int = 150) -> list[str]:
+ 
+ async def get_embedding(text: str, api_key: str) -> list[float]:
+     try:
+-        url = f"https://generativelanguage.googleapis.com/v1beta/models/embedding-001:embedContent?key={api_key.strip()}"
++        url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={api_key.strip()}"
+         payload = {
+-            "model": "models/embedding-001",
+-            "content": {"parts": [{"text": text[:8000]}]}
++            "model": "models/text-embedding-004",
++            "content": {"parts": [{"text": text[:8000]}]},
++            "outputDimensionality": 768
+         }
+         res = await asyncio.to_thread(lambda: requests.post(url, json=payload, timeout=10))
+         res_json = res.json()
+
+commit 2738d89ab9d8324253c148c45ac02f6af1f2fcce
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Wed Mar 4 23:19:26 2026 +0300
+
+    Fix: Revert back to text-embedding-004 using outputDimensionality JSON and wrap upload in try-except block to prevent Vercel 500 crashes
+
+diff --git a/main.py b/main.py
+index 95249b2..324a13a 100644
+--- a/main.py
++++ b/main.py
+@@ -778,19 +778,22 @@ async def upload_file(
+         raise HTTPException(400, "Dosyadan metin çıkarılamadı.")
+ 
+     chunks = chunk_text(text)
+-    await index_chunks(chunks, filename, {"type": "file", "size_mb": round(size_mb, 2)}, api_key)
+-
+-    # Klasöre ekleme mantığı
+-    if folder_id and folder_id != "f_default":
+-        folders = load_folders()
+-        for f in folders:
+-            if f["id"] == folder_id:
+-                if filename not in f.get("docs", []):
+-                    f.setdefault("docs", []).append(filename)
+-                    save_folders(folders)
+-                break
+-
+-    return {"message": f"✅ '{filename}' yüklendi ({len(chunks)} parça · {size_mb:.1f} MB)"}
++    
++    try:
++        await index_chunks(chunks, filename, {"type": "file", "size_mb": round(size_mb, 2)}, api_key)
++        
++        # Klasöre ekleme mantığı
++        if folder_id and folder_id != "f_default":
++            folders = load_folders()
++            for f in folders:
++                if f["id"] == folder_id:
++                    if filename not in f.get("docs", []):
++                        f.setdefault("docs", []).append(filename)
++                        save_folders(folders)
++                    break
++        return {"message": f"✅ '{filename}' yüklendi ({len(chunks)} parça · {size_mb:.1f} MB)", "chunks": len(chunks)}
++    except Exception as e:
++        raise HTTPException(400, f"Yükleme tamamlanamadı: {e}")
+ 
+ # ── Single URL ───────────────────────────────────────────────────────────────
+ 
+
+commit 50a7776cadeae96f0c1c29787d57cec3f92d54cb
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Wed Mar 4 23:11:30 2026 +0300
+
+    Fix: Revert to models/embedding-001 to resolve text-embedding-004 not found error
+
+diff --git a/main.py b/main.py
+index 4684119..95249b2 100644
+--- a/main.py
++++ b/main.py
+@@ -124,11 +124,10 @@ def chunk_text(text: str, size: int = 800, overlap: int = 150) -> list[str]:
+ 
+ async def get_embedding(text: str, api_key: str) -> list[float]:
+     try:
+-        url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={api_key.strip()}"
++        url = f"https://generativelanguage.googleapis.com/v1beta/models/embedding-001:embedContent?key={api_key.strip()}"
+         payload = {
+-            "model": "models/text-embedding-004",
+-            "content": {"parts": [{"text": text[:8000]}]},
+-            "outputDimensionality": 768
++            "model": "models/embedding-001",
++            "content": {"parts": [{"text": text[:8000]}]}
+         }
+         res = await asyncio.to_thread(lambda: requests.post(url, json=payload, timeout=10))
+         res_json = res.json()
+
+commit 499435c06f9c1bb31f1a8d0d278c735af7c8a43e
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Wed Mar 4 23:00:10 2026 +0300
+
+    Fix API key stripping, add sys import, and add try-except to get_embedding and gemini_chat to prevent Vercel 500 plain text crashes
+
+diff --git a/main.py b/main.py
+index ac392e2..4684119 100644
+--- a/main.py
++++ b/main.py
+@@ -137,8 +137,7 @@ async def get_embedding(text: str, api_key: str) -> list[float]:
+         return res_json["embedding"]["values"]
+     except Exception as e:
+         import traceback
+-        with open("error_log.txt", "a", encoding="utf-8") as f:
+-            f.write(f"\n{'='*60}\n{traceback.format_exc()}\n")
++        logging.error(f"Embedding API Error:\n{traceback.format_exc()}")
+         raise
+ 
+ async def gemini_chat(prompt: str, system_prompt: str, api_key: str) -> str:
+@@ -945,7 +944,11 @@ async def query(
+     if not count_res.count or count_res.count == 0: 
+         raise HTTPException(400, "Henüz belge yüklenmedi")
+ 
+-    q_emb = await get_embedding(question, api_key)
++    try:
++        q_emb = await get_embedding(question, api_key)
++    except Exception as e:
++        raise HTTPException(400, f"Embedding hatası (API Key geçersiz olabilir): {e}")
++
+     q_emb_str = f"[{','.join(map(str, q_emb))}]"
+     
+     # Vector search RPC call
+@@ -994,9 +997,12 @@ async def query(
+ 
+     context = "\n\n---\n\n".join(
+         f"[Kaynak {i+1}]: {c}" for i, c in enumerate(chunks))
+-    answer  = await gemini_chat(
+-        f"Aşağıdaki kaynaklardan yararlanarak soruyu yanıtla:\n\n{context}\n\nSoru: {question}",
+-        system_prompt, api_key)
++    try:
++        answer  = await gemini_chat(
++            f"Aşağıdaki kaynaklardan yararlanarak soruyu yanıtla:\n\n{context}\n\nSoru: {question}",
++            system_prompt, api_key)
++    except Exception as e:
++        raise HTTPException(500, f"Yapay zeka yanıt üretirken hata oluştu: {e}")
+ 
+     # Markdown temizle
+     answer = strip_markdown(answer)
+
+commit f6a55da9531c4ec94265a18636c4e1b7c89ea578
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Wed Mar 4 22:56:21 2026 +0300
+
+    Fix API Key string spacing and missing sys import
+
+diff --git a/main.py b/main.py
+index 4e4634c..ac392e2 100644
+--- a/main.py
++++ b/main.py
+@@ -12,6 +12,7 @@ from typing import Optional
+ from urllib.parse import urljoin, urlparse
+ from collections import deque
+ from datetime import datetime
++import sys
+ 
+ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header, BackgroundTasks
+ from fastapi.staticfiles import StaticFiles
+@@ -123,7 +124,7 @@ def chunk_text(text: str, size: int = 800, overlap: int = 150) -> list[str]:
+ 
+ async def get_embedding(text: str, api_key: str) -> list[float]:
+     try:
+-        url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={api_key}"
++        url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={api_key.strip()}"
+         payload = {
+             "model": "models/text-embedding-004",
+             "content": {"parts": [{"text": text[:8000]}]},
+
+commit 7355083f99f6ebefb888021c6266d5849396482a
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Wed Mar 4 22:37:25 2026 +0300
+
+    Fix: Force 768 dimension text embeddings using V1Beta REST API to fix Vercel mismatch error
+
+diff --git a/main.py b/main.py
+index f2fad8f..4e4634c 100644
+--- a/main.py
++++ b/main.py
+@@ -122,14 +122,18 @@ def chunk_text(text: str, size: int = 800, overlap: int = 150) -> list[str]:
+     return [c for c in chunks if len(c.strip()) > 50]
+ 
+ async def get_embedding(text: str, api_key: str) -> list[float]:
+-    client = genai.Client(api_key=api_key)
+     try:
+-        response = await asyncio.to_thread(
+-            client.models.embed_content,
+-            model='gemini-embedding-001',
+-            contents=text[:8000]
+-        )
+-        return response.embeddings[0].values
++        url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={api_key}"
++        payload = {
++            "model": "models/text-embedding-004",
++            "content": {"parts": [{"text": text[:8000]}]},
++            "outputDimensionality": 768
++        }
++        res = await asyncio.to_thread(lambda: requests.post(url, json=payload, timeout=10))
++        res_json = res.json()
++        if "error" in res_json:
++            raise Exception(res_json["error"].get("message", "API Error"))
++        return res_json["embedding"]["values"]
+     except Exception as e:
+         import traceback
+         with open("error_log.txt", "a", encoding="utf-8") as f:
+
+commit ba71d1b3c1a5f516ed318aa8e8b22cb94645b457
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Wed Mar 4 22:01:00 2026 +0300
+
+    Fix: Replace local JSON history with Supabase folders persistence to run on Vercel
+
+diff --git a/main.py b/main.py
+index 8cae438..f2fad8f 100644
+--- a/main.py
++++ b/main.py
+@@ -127,8 +127,7 @@ async def get_embedding(text: str, api_key: str) -> list[float]:
+         response = await asyncio.to_thread(
+             client.models.embed_content,
+             model='gemini-embedding-001',
+-            contents=text[:8000],
+-            config=types.EmbedContentConfig(output_dimensionality=768)
++            contents=text[:8000]
+         )
+         return response.embeddings[0].values
+     except Exception as e:
+@@ -900,17 +899,28 @@ async def crawl_stop(job_id: str):
+ HISTORY_FILE = "history.json"
+ 
+ def load_history() -> list:
+-    if os.path.exists(HISTORY_FILE):
+-        try:
+-            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+-                return json.load(f)
+-        except Exception:
+-            return []
++    try:
++        res = supabase.table("folders").select("docs").eq("id", "f_history").limit(1).execute()
++        if res.data and isinstance(res.data[0].get("docs"), list):
++            return res.data[0]["docs"]
++    except Exception as e:
++        logging.error(f"Error loading history from Supabase: {e}")
+     return []
+ 
+ def save_history(history: list):
+-    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+-        json.dump(history, f, ensure_ascii=False, indent=2)
++    try:
++        # Check if f_history exists
++        res = supabase.table("folders").select("id").eq("id", "f_history").limit(1).execute()
++        if not res.data:
++            supabase.table("folders").insert({
++                "id": "f_history",
++                "name": "_System_History_",
++                "docs": history
++            }).execute()
++        else:
++            supabase.table("folders").update({"docs": history}).eq("id", "f_history").execute()
++    except Exception as e:
++        logging.error(f"Error saving history to Supabase: {e}")
+ 
+ # ── Query ────────────────────────────────────────────────────────────────────
+ 
+@@ -1038,6 +1048,7 @@ def load_folders() -> list[dict]:
+         folders = []
+         has_default = False
+         for row in (res.data or []):
++            if row["id"] == "f_history": continue
+             docs = row.get("docs") or []
+             if isinstance(docs, str):
+                 try: docs = json.loads(docs)
+@@ -1061,6 +1072,7 @@ def save_folders(data: list[dict]):
+     """Klasör verilerini Supabase'e yazar (upsert)."""
+     try:
+         for f in data:
++            if f["id"] == "f_history": continue
+             row = {"id": f["id"], "name": f["name"], "docs": f.get("docs", [])}
+             supabase.table("folders").upsert(row).execute()
+     except Exception as e:
+
+commit de43c2d872dfc79f0a5d470b50e2476d27017a8b
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Wed Mar 4 21:43:31 2026 +0300
+
+    Fix Gemini embedding dimension to 768 to match pgvector schema
+
+diff --git a/main.py b/main.py
+index 78a2edb..8cae438 100644
+--- a/main.py
++++ b/main.py
+@@ -127,7 +127,8 @@ async def get_embedding(text: str, api_key: str) -> list[float]:
+         response = await asyncio.to_thread(
+             client.models.embed_content,
+             model='gemini-embedding-001',
+-            contents=text[:8000]
++            contents=text[:8000],
++            config=types.EmbedContentConfig(output_dimensionality=768)
+         )
+         return response.embeddings[0].values
+     except Exception as e:
+
+commit 86ad425490d374d004aa6bca63a8d6e9f06c4ab4
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Wed Mar 4 21:37:56 2026 +0300
+
+    Fix Drive Sync collection bug and update YouTube error text
+
+diff --git a/main.py b/main.py
+index 3779577..78a2edb 100644
+--- a/main.py
++++ b/main.py
+@@ -327,27 +327,20 @@ def extract_text_from_drive_file(data: bytes, mime: str) -> str:
+     return ""
+ 
+ def get_indexed_drive_ids() -> set[str]:
+-    """ChromaDB'deki Drive kaynaklı dosya ID'lerini döner."""
+-    if collection.count() == 0:
++    """Supabase'deki Drive kaynaklı dosya ID'lerini döner."""
++    try:
++        res = supabase.table("documents").select("metadata").eq("metadata->>type", "drive").execute()
++        return {d["metadata"]["drive_id"] for d in res.data if d.get("metadata", {}).get("drive_id")}
++    except Exception as e:
++        logging.error(f"Error getting indexed drive ids: {e}")
+         return set()
+-    items = collection.get(include=["metadatas"])
+-    ids = set()
+-    for m in items["metadatas"]:
+-        if m.get("type") == "drive" and m.get("drive_id"):
+-            ids.add(m["drive_id"])
+-    return ids
+ 
+ def remove_drive_file_from_index(drive_id: str):
+-    """Belirli bir Drive dosyasının tüm chunk'larını ChromaDB'den siler."""
+-    if collection.count() == 0:
+-        return
+-    items = collection.get(include=["metadatas"])
+-    ids_to_delete = []
+-    for idx, m in enumerate(items["metadatas"]):
+-        if m.get("drive_id") == drive_id:
+-            ids_to_delete.append(items["ids"][idx])
+-    if ids_to_delete:
+-        collection.delete(ids=ids_to_delete)
++    """Belirli bir Drive dosyasının tüm chunk'larını Supabase'den siler."""
++    try:
++        supabase.table("documents").delete().eq("metadata->>drive_id", drive_id).execute()
++    except Exception as e:
++        logging.error(f"Error removing drive file from index: {e}")
+ 
+ async def sync_drive_folder(api_key: str, drive_folder_id: Optional[str] = None):
+     """Drive klasörünü senkronize eder → yeni/değişen dosyaları indexler, silinenleri kaldırır."""
+@@ -395,11 +388,16 @@ async def sync_drive_folder(api_key: str, drive_folder_id: Optional[str] = None)
+ 
+         # Mevcut index'teki dosya modifiedTime'larını kontrol et
+         indexed_times = {}
+-        if collection.count() > 0:
+-            items = collection.get(include=["metadatas"])
+-            for m in items["metadatas"]:
+-                if m.get("type") == "drive" and m.get("drive_id"):
++        items_res_data = []
++        try:
++            res = await asyncio.to_thread(lambda: supabase.table("documents").select("metadata").eq("metadata->>type", "drive").execute())
++            items_res_data = res.data
++            for d in items_res_data:
++                m = d.get("metadata", {})
++                if m.get("drive_id"):
+                     indexed_times[m["drive_id"]] = m.get("modified_time", "")
++        except Exception as e:
++            logging.error(f"Drive index items fetch error: {e}")
+ 
+         synced = 0
+         total_chunks = 0
+@@ -415,7 +413,7 @@ async def sync_drive_folder(api_key: str, drive_folder_id: Optional[str] = None)
+             if fid in indexed_times and indexed_times[fid] == mod_time:
+                 # Mevcut chunk sayısını hesapla
+                 existing_chunks = sum(
+-                    1 for m in items["metadatas"] if m.get("drive_id") == fid
++                    1 for d in items_res_data if d.get("metadata", {}).get("drive_id") == fid
+                 )
+                 file_list.append({"name": fname, "chunks": existing_chunks, "drive_id": fid})
+                 total_chunks += existing_chunks
+@@ -736,6 +734,14 @@ async def startup_sync():
+ async def serve_ui():
+     return Path("static/index.html").read_text(encoding="utf-8")
+ 
++@app.get("/debug-db")
++async def debug_db():
++    return {
++        "supabase_url": SUPABASE_URL,
++        "supabase_key_start": SUPABASE_KEY[:15] if SUPABASE_KEY else None,
++        "python_version": sys.version
++    }
++
+ # ── File upload ──────────────────────────────────────────────────────────────
+ 
+ @app.post("/upload")
+@@ -800,7 +806,10 @@ async def add_url(
+             text, title = await asyncio.to_thread(fetch_yt, vid)
+             source, extra = f"▶ {title}", {"type": "youtube", "url": url}
+         except Exception as e:
+-            raise HTTPException(400, f"YouTube transkripti alınamadı: {e}")
++            msg = str(e)
++            if "Could not retrieve a transcript" in msg or "Subtitles are disabled" in msg:
++                raise HTTPException(400, "Vercel Sunucu Engeli: YouTube, Vercel IP'lerinden gelen isteklere (bot koruması nedeniyle) engel koyuyor. Bu özellik sadece lokalde çalışır.")
++            raise HTTPException(400, f"YouTube transkripti alınamadı: {msg}")
+     else:
+         try:
+             r      = await asyncio.to_thread(lambda: requests.get(url, timeout=15,
+
+commit d3c120d8983afe76140eb66d4529b5c33204041d
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Wed Mar 4 19:54:01 2026 +0300
+
+    Fix: Raise explicit 500 error if Supabase insert fails during upload
+
+diff --git a/main.py b/main.py
+index 3706185..3779577 100644
+--- a/main.py
++++ b/main.py
+@@ -180,6 +180,7 @@ async def index_chunks(chunks: list[str], source: str, meta: dict, api_key: str)
+             res = await asyncio.to_thread(lambda: supabase.table("documents").insert(records).execute())
+         except Exception as e:
+             logging.error(f"Supabase insert error: {e}")
++            raise HTTPException(500, f"Veritabanı kayıt hatası (Supabase): {str(e)[:200]}")
+             
+     return len(records)
+ 
+
+commit dd2555dc0aa82b0670b0bfba1e3bcb3345832355
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Wed Mar 4 16:45:39 2026 +0300
+
+    Fix Supabase key: use correct anon public key
+
+diff --git a/main.py b/main.py
+index 3651e64..3706185 100644
+--- a/main.py
++++ b/main.py
+@@ -41,7 +41,7 @@ app = FastAPI(title="RAG API")
+ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+ 
+ SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://kkzommsulkxccrcmhtnq.supabase.co")
+-SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "sb_publishable_89yPcdQ8j-rY7GJrUCfQpg_FGcmpeO_")
++SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtrem9tbXN1bGt4Y2NyY21odG5xIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI1NjU3MTQsImV4cCI6MjA4ODE0MTcxNH0.PROlh1JVQkylMcGuwyoBzxrE2z_o_dIYa_HGM8hAKHs")
+ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+ 
+ # Job store: crawl_jobs[job_id] = {...}
+
+commit 89870b96c044636157cc8d7ac82652cc2b61de56
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Wed Mar 4 16:42:20 2026 +0300
+
+    CRITICAL FIX: Migrate folders to Supabase, fix YouTube API, replace all ChromaDB references
+
+diff --git a/main.py b/main.py
+index ccea6bd..3651e64 100644
+--- a/main.py
++++ b/main.py
+@@ -484,29 +484,23 @@ def yt_video_id(url: str) -> Optional[str]:
+     return None
+ 
+ def fetch_yt(vid: str) -> tuple[str, str]:
+-    import subprocess
+-    import sys
+     try:
+-        cmd = [sys.executable, "-m", "youtube_transcript_api", vid, "--format", "json"]
++        ytt = YouTubeTranscriptApi()
++        transcript_list = ytt.list(vid)
+         
+-        # Windows'ta konsol penceresi açılmaması için
+-        kwargs = {}
+-        if sys.platform == "win32":
+-            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+-            
+-        res = subprocess.run(cmd, capture_output=True, text=True, check=True, **kwargs)
+-        data = json.loads(res.stdout)
++        # Türkçe veya İngilizce altyazı bulmaya çalış
++        try:
++            transcript = transcript_list.find_transcript(['tr', 'en'])
++        except Exception:
++            # Bulamazsa ilk dildeki altyazıyı al
++            transcript = list(transcript_list)[0]
+         
+-        if isinstance(data, list) and len(data) > 0 and isinstance(data[0], list):
+-            items = data[0]
+-        else:
+-            items = data
+-            
+-        text = " ".join([i.get("text", "") for i in items])
++        data = transcript.fetch()
++        text = " ".join([snippet.text for snippet in data])
+         text = re.sub(r"\s+", " ", re.sub(r"\[.*?\]", "", text)).strip()
+         
+     except Exception as e:
+-        raise ValueError(f"Altyazı bulunamadı veya kapalı. (Sistem Hatası: {str(e)[:50]})") from e
++        raise ValueError(f"Altyazı bulunamadı veya kapalı. (Sistem Hatası: {str(e)[:80]})") from e
+ 
+     try:
+         r = requests.get(f"https://www.youtube.com/watch?v={vid}",
+@@ -1026,21 +1020,40 @@ async def touch_history_item(item_id: str):
+ 
+ # ── Documents & Folders ──────────────────────────────────────────────────────
+ 
+-FOLDERS_FILE = "folders.json"
+-
+ def load_folders() -> list[dict]:
+-    if os.path.exists(FOLDERS_FILE):
+-        try:
+-            with open(FOLDERS_FILE, "r", encoding="utf-8") as f:
+-                return json.load(f)
+-        except Exception:
+-            pass
+-    # Varsayılan yapı
+-    return [{"id": "f_default", "name": "Diğer Belgeler", "docs": []}]
++    """Supabase'den klasör listesini çeker."""
++    try:
++        res = supabase.table("folders").select("*").execute()
++        folders = []
++        has_default = False
++        for row in (res.data or []):
++            docs = row.get("docs") or []
++            if isinstance(docs, str):
++                try: docs = json.loads(docs)
++                except: docs = []
++            f = {"id": row["id"], "name": row["name"], "docs": docs}
++            if row["id"] == "f_default":
++                has_default = True
++            folders.append(f)
++        if not has_default:
++            default_row = {"id": "f_default", "name": "Diğer Belgeler", "docs": []}
++            try:
++                supabase.table("folders").upsert(default_row).execute()
++            except: pass
++            folders.insert(0, default_row)
++        return folders
++    except Exception as e:
++        logging.error(f"load_folders error: {e}")
++        return [{"id": "f_default", "name": "Diğer Belgeler", "docs": []}]
+ 
+ def save_folders(data: list[dict]):
+-    with open(FOLDERS_FILE, "w", encoding="utf-8") as f:
+-        json.dump(data, f, ensure_ascii=False, indent=2)
++    """Klasör verilerini Supabase'e yazar (upsert)."""
++    try:
++        for f in data:
++            row = {"id": f["id"], "name": f["name"], "docs": f.get("docs", [])}
++            supabase.table("folders").upsert(row).execute()
++    except Exception as e:
++        logging.error(f"save_folders error: {e}")
+ 
+ @app.get("/folders")
+ async def get_folders():
+@@ -1143,45 +1156,40 @@ async def move_doc(doc_name: str = Form(...), target_folder_id: str = Form(...))
+ 
+ @app.get("/documents")
+ async def list_documents():
+-    if collection.count() == 0:
++    docs_res = await asyncio.to_thread(lambda: supabase.table("documents").select("source, metadata").execute())
++    if not docs_res.data:
+         return {"documents": [], "total_chunks": 0}
+-    items = collection.get(include=["metadatas"])
+     srcs: dict[str, dict] = {}
+-    for m in items["metadatas"]:
+-        s = m["source"]
++    for d in docs_res.data:
++        s = d["source"]
+         if s not in srcs:
++            m = d.get("metadata", {})
+             srcs[s] = {"name": s, "chunks": 0, "type": m.get("type","file")}
+         srcs[s]["chunks"] += 1
+-    return {"documents": list(srcs.values()), "total_chunks": collection.count()}
++    count_res = await asyncio.to_thread(lambda: supabase.table("documents").select("id", count="exact").limit(1).execute())
++    total = count_res.count if count_res.count else 0
++    return {"documents": list(srcs.values()), "total_chunks": total}
+ 
+ @app.post("/rename-document")
+ async def rename_document(
+     old_name: str = Form(...),
+     new_name: str = Form(...),
+ ):
+-    """Belge kaynağının adını değiştirir."""
+-    if collection.count() == 0:
+-        raise HTTPException(400, "Belge bulunamadı")
+-    items = collection.get(include=["metadatas"])
+-    ids_to_update = []
+-    metas_to_update = []
+-    for idx, m in enumerate(items["metadatas"]):
+-        if m.get("source") == old_name:
+-            ids_to_update.append(items["ids"][idx])
+-            m["source"] = new_name
+-            metas_to_update.append(m)
+-    # Belgeler isimlendirilirken folders.json içindeki referansı da güncelleyelim
++    """Belge kaynağının adını değiştirir (Supabase)."""
++    # Supabase'deki source alanını güncelle
++    res = await asyncio.to_thread(lambda: supabase.table("documents").update({"source": new_name}).eq("source", old_name).execute())
++    if not res.data:
++        raise HTTPException(404, f"'{old_name}' bulunamadı")
++    
++    # Klasör referanslarını güncelle
+     folders = load_folders()
+     for f in folders:
+         if old_name in f.get("docs", []):
+             f["docs"].remove(old_name)
+             f["docs"].append(new_name)
+     save_folders(folders)
+-
+-    if not ids_to_update:
+-        raise HTTPException(404, f"'{old_name}' bulunamadı")
+-    collection.update(ids=ids_to_update, metadatas=metas_to_update)
+-    return {"message": f"✅ '{old_name}' → '{new_name}' olarak güncellendi ({len(ids_to_update)} parça)"}
++    
++    return {"message": f"✅ '{old_name}' → '{new_name}' olarak güncellendi ({len(res.data)} parça)"}
+ 
+ @app.delete("/document/{doc_name:path}")
+ async def delete_document(doc_name: str):
+@@ -1231,23 +1239,15 @@ async def summarize_document(
+     doc_name: str = Form(...),
+     x_api_key: Optional[str] = Header(None)
+ ):
+-    if not x_api_key and not GEMINI_API_KEY:
++    api_key = get_api_key(x_api_key)
++    if not api_key:
+         raise HTTPException(401, "API Key eksik")
+-    api_key = x_api_key or GEMINI_API_KEY
+     
+-    if collection.count() == 0:
+-        raise HTTPException(404, "Koleksiyon boş")
+-        
+-    results = collection.get(
+-        where={"source": doc_name},
+-        include=["documents"]
+-    )
+-    docs = results.get("documents", [])
+-    if not docs:
++    res = await asyncio.to_thread(lambda: supabase.table("documents").select("content").eq("source", doc_name).execute())
++    if not res.data:
+         raise HTTPException(404, "Belge bulunamadı")
+         
+-    full_text = "\n\n".join(docs)
+-    # Gemini limitlerine takılmaması için metni sınırla (isteğe bağlı)
++    full_text = "\n\n".join(d["content"] for d in res.data)
+     max_chars = 100000 
+     truncated_text = full_text[:max_chars]
+     
+@@ -1265,22 +1265,15 @@ async def toc_document(
+     x_api_key: Optional[str] = Header(None)
+ ):
+     """Belgenin içindekiler listesini (TOC) çıkarır."""
+-    if not x_api_key and not GEMINI_API_KEY:
++    api_key = get_api_key(x_api_key)
++    if not api_key:
+         raise HTTPException(401, "API Key eksik")
+-    api_key = x_api_key or GEMINI_API_KEY
+     
+-    if collection.count() == 0:
+-        raise HTTPException(404, "Koleksiyon boş")
+-        
+-    results = collection.get(
+-        where={"source": doc_name},
+-        include=["documents"]
+-    )
+-    docs = results.get("documents", [])
+-    if not docs:
++    res = await asyncio.to_thread(lambda: supabase.table("documents").select("content").eq("source", doc_name).execute())
++    if not res.data:
+         raise HTTPException(404, "Belge bulunamadı")
+         
+-    full_text = "\n\n".join(docs)
++    full_text = "\n\n".join(d["content"] for d in res.data)
+     max_chars = 100000 
+     truncated_text = full_text[:max_chars]
+     
+
+commit 524f0c3e06d3ebd4aac9c5ab227c28373ed6200c
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Wed Mar 4 16:31:15 2026 +0300
+
+    Revert fetch_yt to working subprocess call
+
+diff --git a/main.py b/main.py
+index e749a54..ccea6bd 100644
+--- a/main.py
++++ b/main.py
+@@ -484,26 +484,25 @@ def yt_video_id(url: str) -> Optional[str]:
+     return None
+ 
+ def fetch_yt(vid: str) -> tuple[str, str]:
++    import subprocess
++    import sys
+     try:
+-        # Önce videodaki tüm dilleri listele
+-        transcript_list = YouTubeTranscriptApi.list_transcripts(vid)
++        cmd = [sys.executable, "-m", "youtube_transcript_api", vid, "--format", "json"]
+         
+-        try:
+-            # Türkçe veya İngilizce manuel/otomatik altyazı bulmaya çalış
+-            transcript = transcript_list.find_transcript(['tr', 'en'])
+-        except Exception:
+-            # Bulamazsa bulduğun ilk dildeki altyazıyı getir ve Türkçeye çevirt (veya olduğu gibi al)
+-            try:
+-                # Get the first available transcript
+-                transcript = list(transcript_list)[0]
+-                if getattr(transcript, 'language_code', '') != 'tr': # Avoid error if attribute missing
+-                   transcript = transcript.translate('tr')
+-            except Exception:
+-                # If everything fails, just grab any available transcript as a fallback
+-                transcript = list(transcript_list)[0]
+-
+-        data = transcript.fetch()
+-        text = " ".join([i.get("text", "") for i in data])
++        # Windows'ta konsol penceresi açılmaması için
++        kwargs = {}
++        if sys.platform == "win32":
++            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
++            
++        res = subprocess.run(cmd, capture_output=True, text=True, check=True, **kwargs)
++        data = json.loads(res.stdout)
++        
++        if isinstance(data, list) and len(data) > 0 and isinstance(data[0], list):
++            items = data[0]
++        else:
++            items = data
++            
++        text = " ".join([i.get("text", "") for i in items])
+         text = re.sub(r"\s+", " ", re.sub(r"\[.*?\]", "", text)).strip()
+         
+     except Exception as e:
+
+commit 4f497323c72b51091a6017ccba90c48c9f3049bc
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Wed Mar 4 13:41:59 2026 +0300
+
+    Fix UI progress texts, Google Drive warning, and YouTube API fetching implementation
+
+diff --git a/main.py b/main.py
+index a223e21..e749a54 100644
+--- a/main.py
++++ b/main.py
+@@ -22,7 +22,7 @@ from google import genai
+ from google.genai import types
+ 
+ import PyPDF2
+-import docx
++from docx import Document
+ import ebooklib
+ from ebooklib import epub
+ import requests
+@@ -484,29 +484,30 @@ def yt_video_id(url: str) -> Optional[str]:
+     return None
+ 
+ def fetch_yt(vid: str) -> tuple[str, str]:
+-    import subprocess
+-    import sys
+     try:
+-        cmd = [sys.executable, "-m", "youtube_transcript_api", vid, "--format", "json"]
++        # Önce videodaki tüm dilleri listele
++        transcript_list = YouTubeTranscriptApi.list_transcripts(vid)
+         
+-        # Windows'ta konsol penceresi açılmaması için
+-        kwargs = {}
+-        if sys.platform == "win32":
+-            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+-            
+-        res = subprocess.run(cmd, capture_output=True, text=True, check=True, **kwargs)
+-        data = json.loads(res.stdout)
+-        
+-        if isinstance(data, list) and len(data) > 0 and isinstance(data[0], list):
+-            items = data[0]
+-        else:
+-            items = data
+-            
+-        text = " ".join([i.get("text", "") for i in items])
++        try:
++            # Türkçe veya İngilizce manuel/otomatik altyazı bulmaya çalış
++            transcript = transcript_list.find_transcript(['tr', 'en'])
++        except Exception:
++            # Bulamazsa bulduğun ilk dildeki altyazıyı getir ve Türkçeye çevirt (veya olduğu gibi al)
++            try:
++                # Get the first available transcript
++                transcript = list(transcript_list)[0]
++                if getattr(transcript, 'language_code', '') != 'tr': # Avoid error if attribute missing
++                   transcript = transcript.translate('tr')
++            except Exception:
++                # If everything fails, just grab any available transcript as a fallback
++                transcript = list(transcript_list)[0]
++
++        data = transcript.fetch()
++        text = " ".join([i.get("text", "") for i in data])
+         text = re.sub(r"\s+", " ", re.sub(r"\[.*?\]", "", text)).strip()
+         
+     except Exception as e:
+-        raise ValueError("Altyazı bulunamadı veya kapalı. Lütfen videoda otomatik çeviri veya altyazı olduğuna emin olun.") from e
++        raise ValueError(f"Altyazı bulunamadı veya kapalı. (Sistem Hatası: {str(e)[:50]})") from e
+ 
+     try:
+         r = requests.get(f"https://www.youtube.com/watch?v={vid}",
+
+commit 8f89c434ccc5a65666c1ecc3373f9ad398a2a7e4
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Tue Mar 3 23:15:41 2026 +0300
+
+    Phase 8: Add match_documents RPC vector logic for Supabase
+
+diff --git a/main.py b/main.py
+index 9541047..a223e21 100644
+--- a/main.py
++++ b/main.py
+@@ -195,8 +195,6 @@ async def content_score(query_hint: str, api_key: str) -> float:
+         return 1.0
+         
+     try:
+-        # Önce tabloda hiç kayıt var mı diye kontrol edelim
+-        # (Chroma'nın count(). 1 tane varsa bile yeter)
+         count_res = await asyncio.to_thread(lambda: supabase.table("documents").select("id", count="exact").limit(1).execute())
+         if not count_res.count or count_res.count == 0:
+             return 1.0
+@@ -204,15 +202,20 @@ async def content_score(query_hint: str, api_key: str) -> float:
+         emb = await get_embedding(query_hint, api_key)
+         emb_str = f"[{','.join(map(str, emb))}]"
+         
+-        # Supabase'de vector araması yapmak için rpc (Remote Procedure Call) veya match() fonksiyonu yazmak gerekebilir.
+-        # Geçici veya direkt 'order by' sorgusu:
+-        res = await asyncio.to_thread(lambda: supabase.table("documents").select("id, embedding").order("embedding", desc=False).limit(1).execute())
+-        # Ancak Supabase REST API üzerinden doğrudan vektör sıralaması `.order("embedding <-> '...'")` şeklinde desteklemiyor olabilir.
+-        # Bu yüzden veritabanında "match_documents" fonksiyonu oluşturmamız gerekecek (Aşağıdaki adımlarda ekleyeceğiz).
+-        # Şimdilik 1.0 dönüp kırmaya engel olalım
++        # SQL rpc call
++        res = await asyncio.to_thread(
++            lambda: supabase.rpc('match_documents', {
++                'query_embedding': emb_str,
++                'match_threshold': 0.0,
++                'match_count': 1
++            }).execute()
++        )
+         
+-        # TODO: RPC call to match_documents
+-        # res = supabase.rpc('match_documents', {'query_embedding': emb_str, 'match_threshold': 0.0, 'match_count': 1}).execute()
++        if res.data:
++            # similarity returns 1 - cosine_distance. Thus distance = 1 - similarity.
++            sim = res.data[0].get("similarity", 0)
++            return 1.0 - sim
++            
+         return 1.0
+     except Exception as e:
+         logging.error(f"Supabase score error: {e}")
+@@ -922,16 +925,42 @@ async def query(
+     if not count_res.count or count_res.count == 0: 
+         raise HTTPException(400, "Henüz belge yüklenmedi")
+ 
+-    # TODO: Supabase vector search (RPC: match_documents)
+-    # Şimdilik match_documents olmadığı için çalışmayacak, bir sonraki adımda SQL kuracağız.
+-    # q_emb = await get_embedding(question, api_key)
+-    # q_emb_str = f"[{','.join(map(str, q_emb))}]"
++    q_emb = await get_embedding(question, api_key)
++    q_emb_str = f"[{','.join(map(str, q_emb))}]"
++    
++    # Vector search RPC call
++    try:
++        res = await asyncio.to_thread(
++            lambda: supabase.rpc('match_documents', {
++                'query_embedding': q_emb_str,
++                'match_threshold': 0.0,
++                'match_count': top_k
++            }).execute()
++        )
++    except Exception as e:
++        logging.error(f"Supabase match_documents RPC error: {e}")
++        raise HTTPException(500, f"Veritabanı arama hatası (Fonksiyon yüklendi mi?): {e}")
++
++    results_data = res.data or []
+     
+-    # Geçici mock data (Supabase vector search henüz tam hazır olmadığı için):
+-    chunks = ["(SQL Supabase Vector Search eklenecek)"]
+-    metas = [{"source": "Belirtilmemiş"}]
+-    dists = [0.1]
+-    sources = []
++    # Filtreleme (where_filter)
++    if selected_sources.strip():
++        src_list = [s.strip() for s in selected_sources.split("||||") if s.strip()]
++        if src_list:
++            results_data = [d for d in results_data if d.get("source") in src_list]
++
++    if not results_data:
++        # Sonuç bulunamasa da LLM'ye boş veya en iyi tahmini yollayalım
++        chunks = ["(Belirli kriterlere uyan veri bulunamadı)"]
++        metas = []
++        dists = []
++        sources = []
++    else:
++        chunks  = [d["content"] for d in results_data]
++        metas   = [{"source": d["source"]} for d in results_data]
++        # cosine distance = 1 - similarity
++        dists   = [1.0 - d["similarity"] for d in results_data]
++        sources = list({d["source"] for d in results_data})
+ 
+     # Chunk detayları (popup için)
+     chunk_details = []
+
+commit 3136cbcde453a9b1bb50362226603f0365fdd058
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Tue Mar 3 23:11:38 2026 +0300
+
+    Phase 8: Add supabase-py, migrate core RAG system, DB models from ChromaDB to Supabase pgvector
+
+diff --git a/main.py b/main.py
+index 737f484..9541047 100644
+--- a/main.py
++++ b/main.py
+@@ -17,7 +17,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header, Back
+ from fastapi.staticfiles import StaticFiles
+ from fastapi.responses import HTMLResponse
+ from fastapi.middleware.cors import CORSMiddleware
+-import chromadb
++from supabase import create_client, Client
+ from google import genai
+ from google.genai import types
+ 
+@@ -40,10 +40,9 @@ from googleapiclient.http import MediaIoBaseDownload
+ app = FastAPI(title="RAG API")
+ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+ 
+-CHROMA_PATH = "./chroma_db"
+-chroma_client = chromadb.PersistentClient(path=CHROMA_PATH)
+-collection = chroma_client.get_or_create_collection(
+-    name="documents", metadata={"hnsw:space": "cosine"})
++SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://kkzommsulkxccrcmhtnq.supabase.co")
++SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "sb_publishable_89yPcdQ8j-rY7GJrUCfQpg_FGcmpeO_")
++supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+ 
+ # Job store: crawl_jobs[job_id] = {...}
+ crawl_jobs: dict[str, dict] = {}
+@@ -152,32 +151,72 @@ async def gemini_chat(prompt: str, system_prompt: str, api_key: str) -> str:
+     return response.text
+ 
+ async def index_chunks(chunks: list[str], source: str, meta: dict, api_key: str) -> int:
+-    doc_id = str(uuid.uuid4())[:8]
+-    embs, ids, metas, docs = [], [], [], []
++    doc_id = str(uuid.uuid4())[:12]
++    
++    # 1) Önce belgeyi/kaynağı temsil eden klasör/dosya mantığını birleştirip Supabase'e atmak gerek.
++    # Geçici çözüm: Tüm belge satırlarını "documents" tablosuna ekle
++    # 'meta' içindeki bilgileri ayrı bir jsonb kolonunda tutacağız.
++    
++    records = []
+     for i, c in enumerate(chunks):
+-        embs.append(await get_embedding(c, api_key))
+-        ids.append(f"{doc_id}_{i}")
+-        metas.append({"source": source, "chunk": i, **{k: str(v) for k, v in meta.items()}})
+-        docs.append(c)
+-    if embs:
+-        collection.add(embeddings=embs, ids=ids, metadatas=metas, documents=docs)
+-    return len(embs)
++        emb = await get_embedding(c, api_key)
++        chunk_id = f"{doc_id}_{i}"
++        
++        # 'folder_id' bilgisi burada meta içinde gelmiyorsa null olabilir.
++        # Aslında folder_id'yi index_chunks'ı çağıran yerler ayarlıyor ama API'dan gelen klasöre göre.
++        # Şimdilik basitçe tabloya yazalım, folder id'ler update_folders vs ile handle edilecek.
++        
++        records.append({
++            "id": chunk_id,
++            "source": source,
++            "content": c,
++            "embedding": emb,
++            "metadata": {"chunk_index": i, **{k: str(v) for k, v in meta.items()}}
++        })
++        
++    if records:
++        # Supabase Python SDK ile toplu ekleme
++        try:
++            res = await asyncio.to_thread(lambda: supabase.table("documents").insert(records).execute())
++        except Exception as e:
++            logging.error(f"Supabase insert error: {e}")
++            
++    return len(records)
+ 
+ # ─── Auto-score: "bu konuda yeterli içerik var mı?" ──────────────────────────
+ 
+ async def content_score(query_hint: str, api_key: str) -> float:
+     """
+-    Index'e bir skor sorgusu atar.
++    Index'e bir skor sorgusu atar. (Supabase pgvector)
+     En iyi eşleşmenin cosine distance'ını döner (0=mükemmel, 1=alakasız).
+     Skor < threshold → "yeterli içerik bulundu".
+-    query_hint yoksa 1.0 döner (her zaman devam et).
+     """
+-    if not query_hint or collection.count() == 0:
++    if not query_hint:
++        return 1.0
++        
++    try:
++        # Önce tabloda hiç kayıt var mı diye kontrol edelim
++        # (Chroma'nın count(). 1 tane varsa bile yeter)
++        count_res = await asyncio.to_thread(lambda: supabase.table("documents").select("id", count="exact").limit(1).execute())
++        if not count_res.count or count_res.count == 0:
++            return 1.0
++            
++        emb = await get_embedding(query_hint, api_key)
++        emb_str = f"[{','.join(map(str, emb))}]"
++        
++        # Supabase'de vector araması yapmak için rpc (Remote Procedure Call) veya match() fonksiyonu yazmak gerekebilir.
++        # Geçici veya direkt 'order by' sorgusu:
++        res = await asyncio.to_thread(lambda: supabase.table("documents").select("id, embedding").order("embedding", desc=False).limit(1).execute())
++        # Ancak Supabase REST API üzerinden doğrudan vektör sıralaması `.order("embedding <-> '...'")` şeklinde desteklemiyor olabilir.
++        # Bu yüzden veritabanında "match_documents" fonksiyonu oluşturmamız gerekecek (Aşağıdaki adımlarda ekleyeceğiz).
++        # Şimdilik 1.0 dönüp kırmaya engel olalım
++        
++        # TODO: RPC call to match_documents
++        # res = supabase.rpc('match_documents', {'query_embedding': emb_str, 'match_threshold': 0.0, 'match_count': 1}).execute()
++        return 1.0
++    except Exception as e:
++        logging.error(f"Supabase score error: {e}")
+         return 1.0
+-    emb = await get_embedding(query_hint, api_key)
+-    res = collection.query(query_embeddings=[emb], n_results=1)
+-    distances = res.get("distances", [[1.0]])[0]
+-    return distances[0] if distances else 1.0
+ 
+ # ─── File Extractors ─────────────────────────────────────────────────────────
+ 
+@@ -877,28 +916,22 @@ async def query(
+ ):
+     api_key = get_api_key(x_api_key)
+     if not api_key: raise HTTPException(400, "GEMINI_API_KEY ayarlanmamış")
+-    if collection.count() == 0: raise HTTPException(400, "Henüz belge yüklenmedi")
+-
+-    # Kaynak filtresi
+-    where_filter = None
+-    if selected_sources.strip():
+-        src_list = [s.strip() for s in selected_sources.split("||||") if s.strip()]
+-        if src_list:
+-            where_filter = {"source": {"$in": src_list}}
+-
+-    q_emb   = await get_embedding(question, api_key)
+-    query_args = dict(
+-        query_embeddings=[q_emb],
+-        n_results=min(top_k, collection.count()),
+-    )
+-    if where_filter:
+-        query_args["where"] = where_filter
+-
+-    results = collection.query(**query_args)
+-    chunks  = results["documents"][0]
+-    metas   = results["metadatas"][0]
+-    dists   = results["distances"][0] if "distances" in results else []
+-    sources = list({m["source"] for m in metas})
++    
++    # Supabase'de belge var mı?
++    count_res = await asyncio.to_thread(lambda: supabase.table("documents").select("id", count="exact").limit(1).execute())
++    if not count_res.count or count_res.count == 0: 
++        raise HTTPException(400, "Henüz belge yüklenmedi")
++
++    # TODO: Supabase vector search (RPC: match_documents)
++    # Şimdilik match_documents olmadığı için çalışmayacak, bir sonraki adımda SQL kuracağız.
++    # q_emb = await get_embedding(question, api_key)
++    # q_emb_str = f"[{','.join(map(str, q_emb))}]"
++    
++    # Geçici mock data (Supabase vector search henüz tam hazır olmadığı için):
++    chunks = ["(SQL Supabase Vector Search eklenecek)"]
++    metas = [{"source": "Belirtilmemiş"}]
++    dists = [0.1]
++    sources = []
+ 
+     # Chunk detayları (popup için)
+     chunk_details = []
+@@ -983,15 +1016,19 @@ def save_folders(data: list[dict]):
+ @app.get("/folders")
+ async def get_folders():
+     folders = load_folders()
+-    # Mevcut belgeleri topla
+-    if collection.count() == 0:
+-        return {"folders": folders, "total_chunks": 0}
+     
+-    items = collection.get(include=["metadatas"])
++    # Supabase'den belge kaynaklarını getir (select distinct source gibi)
++    # Ancak Supabase REST'te distinct zor. Şimdilik düz select yapıp python'da gruplayalım
++    docs_res = await asyncio.to_thread(lambda: supabase.table("documents").select("source, metadata").execute())
++    
++    if not docs_res.data:
++        return {"folders": folders, "total_chunks": 0}
++        
+     srcs: dict[str, dict] = {}
+-    for m in items["metadatas"]:
+-        s = m["source"]
++    for d in docs_res.data:
++        s = d["source"]
+         if s not in srcs:
++            m = d.get("metadata", {})
+             srcs[s] = {"name": s, "chunks": 0, "type": m.get("type","file")}
+         srcs[s]["chunks"] += 1
+     
+@@ -1011,7 +1048,11 @@ async def get_folders():
+             f["doc_details"].extend(unassigned)
+             break
+ 
+-    return {"folders": folders, "total_chunks": collection.count()}
++    # Supabase count
++    count_res = await asyncio.to_thread(lambda: supabase.table("documents").select("id", count="exact").limit(1).execute())
++    total_chunks = count_res.count if count_res.count else 0
++
++    return {"folders": folders, "total_chunks": total_chunks}
+ 
+ @app.post("/create-folder")
+ async def create_folder(name: str = Form(...)):
+@@ -1118,14 +1159,10 @@ async def delete_document(doc_name: str):
+     import urllib.parse
+     doc_name = urllib.parse.unquote(doc_name)
+ 
+-    if collection.count() == 0:
+-        raise HTTPException(404, "Koleksiyon boş")
+-    
+-    results = collection.get(where={"source": doc_name}, include=["metadatas"])
+-    if not results or not results["ids"]:
++    # Supabase Delete
++    res = await asyncio.to_thread(lambda: supabase.table("documents").delete().eq("source", doc_name).execute())
++    if not res.data:
+         raise HTTPException(404, f"'{doc_name}' bulunamadı")
+-        
+-    collection.delete(ids=results["ids"])
+     
+     folders = load_folders()
+     for f in folders:
+@@ -1133,14 +1170,14 @@ async def delete_document(doc_name: str):
+             f["docs"].remove(doc_name)
+     save_folders(folders)
+     
+-    return {"message": f"🗑️ '{doc_name}' tamamen silindi ({len(results['ids'])} parça)"}
++    return {"message": f"🗑️ '{doc_name}' tamamen silindi ({len(res.data)} parça)"}
+ 
+ @app.delete("/documents")
+ async def clear_all():
+-    chroma_client.delete_collection("documents")
+-    global collection
+-    collection = chroma_client.get_or_create_collection(
+-        name="documents", metadata={"hnsw:space": "cosine"})
++    # Supabase clear all
++    # Truncate veya hepsini silme (büyükse limit gelir, şimdilik dummy)
++    await asyncio.to_thread(lambda: supabase.table("documents").delete().neq("id", "0").execute())
++    
+     # Klasörleri de sıfırla
+     save_folders([{"id": "f_default", "name": "Diğer Belgeler", "docs": []}])
+     
+@@ -1150,23 +1187,14 @@ async def clear_all():
+ 
+ @app.get("/document/{doc_name:path}")
+ async def get_document_content(doc_name: str):
+-    """Belirtilen kaynağın (belgenin) tüm içeriğini getirir."""
+-    if collection.count() == 0:
+-        raise HTTPException(404, "Koleksiyon boş")
+-    
+     import urllib.parse
+     doc_name = urllib.parse.unquote(doc_name)
+     
+-    results = collection.get(
+-        where={"source": doc_name},
+-        include=["documents", "metadatas"]
+-    )
+-    
+-    docs = results.get("documents", [])
+-    if not docs:
++    res = await asyncio.to_thread(lambda: supabase.table("documents").select("content").eq("source", doc_name).execute())
++    if not res.data:
+         raise HTTPException(404, "Belge bulunamadı veya içeriği yok")
+         
+-    full_text = "\n\n".join(docs)
++    full_text = "\n\n".join(d["content"] for d in res.data)
+     return {"name": doc_name, "content": full_text}
+ 
+ @app.post("/summarize-document")
+
+commit 5ec108b7f9a8c2c69018877d8f1f60b63ac0779a
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Tue Mar 3 17:03:40 2026 +0300
+
+    Phase 7: Refine tab typography and categorize non-YouTube URLs into a Web folder
+
+diff --git a/main.py b/main.py
+index e6c61dc..737f484 100644
+--- a/main.py
++++ b/main.py
+@@ -779,6 +779,8 @@ async def add_url(
+     
+     # Klasör işlemleri
+     target_fid = folder_id
++    
++    # YouTube videoları için varsayılan klasör logic
+     if vid and (not target_fid or target_fid == "f_default"):
+         folders = load_folders()
+         yt_folder = next((f for f in folders if f["name"].lower() == "youtube"), None)
+@@ -787,6 +789,16 @@ async def add_url(
+             folders.append(yt_folder)
+         target_fid = yt_folder["id"]
+         save_folders(folders)
++        
++    # Standard Web URL'leri (Site) için varsayılan klasör logic
++    elif not vid and (not target_fid or target_fid == "f_default"):
++        folders = load_folders()
++        web_folder = next((f for f in folders if f["name"].lower() == "web"), None)
++        if not web_folder:
++            web_folder = {"id": f"f_{str(uuid.uuid4())[:8]}", "name": "Web", "docs": []}
++            folders.append(web_folder)
++        target_fid = web_folder["id"]
++        save_folders(folders)
+ 
+     if target_fid and target_fid != "f_default":
+         folders = load_folders()
+
+commit 8e5cd9c8dc2c10f7ff06d631f44338ae5c0430b3
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Tue Mar 3 16:33:03 2026 +0300
+
+    Phase 6: Resolve Drive folder name to ID; Style accordions dark blue
+
+diff --git a/main.py b/main.py
+index 50fd2c0..e6c61dc 100644
+--- a/main.py
++++ b/main.py
+@@ -238,6 +238,23 @@ def list_drive_files(service, folder_id: str) -> list[dict]:
+             break
+     return results
+ 
++def resolve_drive_folder_id(service, folder_input: str) -> str:
++    """Kullanıcı klasör ismi girdiyse ID'sini bulur, ID girdiyse aynen döner."""
++    folder_input = folder_input.strip()
++    if not folder_input:
++        return ""
++    
++    # ID format check (Google Drive IDs are usually 25+ chars, no spaces)
++    if len(folder_input) > 20 and " " not in folder_input:
++        return folder_input
++        
++    query = f"name='{folder_input}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
++    resp = service.files().list(q=query, fields="files(id, name)", pageSize=1).execute()
++    files = resp.get('files', [])
++    if not files:
++        raise ValueError(f"Drive'da '{folder_input}' adında bir klasör bulunamadı.")
++    return files[0]['id']
++
+ def download_drive_file(service, file_info: dict) -> bytes:
+     """Drive dosyasını indirir. Google Docs ise text/plain olarak export eder."""
+     mime = file_info.get('mimeType', '')
+@@ -311,7 +328,18 @@ async def sync_drive_folder(api_key: str, drive_folder_id: Optional[str] = None)
+ 
+     try:
+         service = await asyncio.to_thread(get_drive_service)
+-        drive_files = await asyncio.to_thread(list_drive_files, service, folder_id_to_sync)
++        
++        # Eğer kullanıcı klasör ismi girdiyse ID'yi çözümle
++        try:
++            resolved_folder_id = await asyncio.to_thread(resolve_drive_folder_id, service, folder_id_to_sync)
++        except ValueError as e:
++            drive_sync_status.update({
++                "status": "error",
++                "message": str(e)
++            })
++            return
++            
++        drive_files = await asyncio.to_thread(list_drive_files, service, resolved_folder_id)
+ 
+         # Mevcut index'teki drive dosya ID'leri
+         indexed_ids = await asyncio.to_thread(get_indexed_drive_ids)
+
+commit 1b4da0cb20e7c816b5042698d3fa090b9f5fada4
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Tue Mar 3 12:01:13 2026 +0300
+
+    Phase 2 Features: Docs Delete, Multi YouTube, Custom Drive ID, TR TOC
+
+diff --git a/main.py b/main.py
+index 7bf7d03..50fd2c0 100644
+--- a/main.py
++++ b/main.py
+@@ -289,9 +289,18 @@ def remove_drive_file_from_index(drive_id: str):
+     if ids_to_delete:
+         collection.delete(ids=ids_to_delete)
+ 
+-async def sync_drive_folder(api_key: str):
++async def sync_drive_folder(api_key: str, drive_folder_id: Optional[str] = None):
+     """Drive klasörünü senkronize eder → yeni/değişen dosyaları indexler, silinenleri kaldırır."""
+     global drive_sync_status
++    
++    folder_id_to_sync = drive_folder_id or GOOGLE_DRIVE_FOLDER_ID
++    if not folder_id_to_sync:
++        drive_sync_status.update({
++            "status": "error",
++            "message": "Drive klasör ID bulunamadı",
++        })
++        return
++
+     drive_sync_status.update({
+         "status": "running",
+         "message": "Drive klasörü taranıyor...",
+@@ -302,7 +311,7 @@ async def sync_drive_folder(api_key: str):
+ 
+     try:
+         service = await asyncio.to_thread(get_drive_service)
+-        drive_files = await asyncio.to_thread(list_drive_files, service, GOOGLE_DRIVE_FOLDER_ID)
++        drive_files = await asyncio.to_thread(list_drive_files, service, folder_id_to_sync)
+ 
+         # Mevcut index'teki drive dosya ID'leri
+         indexed_ids = await asyncio.to_thread(get_indexed_drive_ids)
+@@ -712,7 +721,11 @@ async def upload_file(
+ # ── Single URL ───────────────────────────────────────────────────────────────
+ 
+ @app.post("/add-url")
+-async def add_url(url: str = Form(...), x_api_key: Optional[str] = Header(None)):
++async def add_url(
++    url: str = Form(...),
++    folder_id: Optional[str] = Form(None),
++    x_api_key: Optional[str] = Header(None)
++):
+     api_key = get_api_key(x_api_key)
+     if not api_key: raise HTTPException(400, "GEMINI_API_KEY ayarlanmamış")
+ 
+@@ -735,6 +748,27 @@ async def add_url(url: str = Form(...), x_api_key: Optional[str] = Header(None))
+     if not text.strip(): raise HTTPException(400, "İçerik boş")
+     chunks = chunk_text(text)
+     await index_chunks(chunks, source, extra, api_key)
++    
++    # Klasör işlemleri
++    target_fid = folder_id
++    if vid and (not target_fid or target_fid == "f_default"):
++        folders = load_folders()
++        yt_folder = next((f for f in folders if f["name"].lower() == "youtube"), None)
++        if not yt_folder:
++            yt_folder = {"id": f"f_{str(uuid.uuid4())[:8]}", "name": "YouTube", "docs": []}
++            folders.append(yt_folder)
++        target_fid = yt_folder["id"]
++        save_folders(folders)
++
++    if target_fid and target_fid != "f_default":
++        folders = load_folders()
++        for f in folders:
++            if f["id"] == target_fid:
++                if source not in f.get("docs", []):
++                    f.setdefault("docs", []).append(source)
++                    save_folders(folders)
++                break
++
+     return {"message": f"✅ {'▶' if vid else '🌐'} Eklendi ({len(chunks)} parça)"}
+ 
+ # ── Layered site crawl ───────────────────────────────────────────────────────
+@@ -1039,6 +1073,28 @@ async def rename_document(
+     collection.update(ids=ids_to_update, metadatas=metas_to_update)
+     return {"message": f"✅ '{old_name}' → '{new_name}' olarak güncellendi ({len(ids_to_update)} parça)"}
+ 
++@app.delete("/document/{doc_name:path}")
++async def delete_document(doc_name: str):
++    import urllib.parse
++    doc_name = urllib.parse.unquote(doc_name)
++
++    if collection.count() == 0:
++        raise HTTPException(404, "Koleksiyon boş")
++    
++    results = collection.get(where={"source": doc_name}, include=["metadatas"])
++    if not results or not results["ids"]:
++        raise HTTPException(404, f"'{doc_name}' bulunamadı")
++        
++    collection.delete(ids=results["ids"])
++    
++    folders = load_folders()
++    for f in folders:
++        if doc_name in f.get("docs", []):
++            f["docs"].remove(doc_name)
++    save_folders(folders)
++    
++    return {"message": f"🗑️ '{doc_name}' tamamen silindi ({len(results['ids'])} parça)"}
++
+ @app.delete("/documents")
+ async def clear_all():
+     chroma_client.delete_collection("documents")
+@@ -1131,7 +1187,7 @@ async def toc_document(
+     max_chars = 100000 
+     truncated_text = full_text[:max_chars]
+     
+-    prompt = f"Lütfen aşağıdaki belgenin sadece 'Ana Başlıkları' ve 'Alt Başlıklarını' hiyerarşik bir liste (İçindekiler / Table of Contents) formatında çıkar:\n\n{truncated_text}"
++    prompt = f"Lütfen aşağıdaki belgenin sadece 'Ana Başlıkları' ve 'Alt Başlıklarını' hiyerarşik bir liste (İçindekiler / Table of Contents) formatında çıkar. Bütün başlıkları KESİNLİKLE TÜRKÇE DİLİNDE oluştur:\n\n{truncated_text}"
+     
+     try:
+         toc_text = await gemini_chat(prompt, "Sen bir akademik asistansın. Sadece başlıkları kullanarak hiyerarşik bir İçindekiler listesi oluştur. Madde işareti kullan, ekstra yorum yapma.", api_key)
+@@ -1145,11 +1201,12 @@ async def toc_document(
+ @app.post("/sync-drive")
+ async def sync_drive(
+     background_tasks: BackgroundTasks,
++    folder_id: Optional[str] = Form(None),
+     x_api_key: Optional[str] = Header(None)
+ ):
+     """Manuel Drive sync tetikler."""
+-    if not GOOGLE_DRIVE_FOLDER_ID:
+-        raise HTTPException(400, "GOOGLE_DRIVE_FOLDER_ID ayarlanmamış")
++    if not GOOGLE_DRIVE_FOLDER_ID and not folder_id:
++        raise HTTPException(400, "GOOGLE_DRIVE_FOLDER_ID veya özel klasör ID ayarlanmamış")
+     if not GOOGLE_SERVICE_ACCOUNT_JSON:
+         raise HTTPException(400, "GOOGLE_SERVICE_ACCOUNT_JSON ayarlanmamış")
+     if drive_sync_status["status"] == "running":
+@@ -1159,7 +1216,8 @@ async def sync_drive(
+     if not api_key:
+         raise HTTPException(400, "GEMINI_API_KEY ayarlanmamış")
+ 
+-    background_tasks.add_task(sync_drive_folder, api_key)
++    folder_id_to_sync = folder_id or GOOGLE_DRIVE_FOLDER_ID
++    background_tasks.add_task(sync_drive_folder, api_key, folder_id_to_sync)
+     return {"message": "🔄 Drive sync başlatıldı"}
+ 
+ @app.get("/drive-status")
+
+commit 64aa39575d541eb2793278762ca0971140c7e622
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Tue Mar 3 00:35:00 2026 +0300
+
+    YouTube API Fix, TOC Formatting, Dropdown Upload
+
+diff --git a/main.py b/main.py
+index e5115d2..7bf7d03 100644
+--- a/main.py
++++ b/main.py
+@@ -405,22 +405,30 @@ def yt_video_id(url: str) -> Optional[str]:
+     return None
+ 
+ def fetch_yt(vid: str) -> tuple[str, str]:
++    import subprocess
++    import sys
+     try:
+-        tl = YouTubeTranscriptApi.list_transcripts(vid)
+-        try: t = tl.find_manually_created_transcript(["tr", "en"])
+-        except Exception:
+-            try: t = tl.find_generated_transcript(["tr", "en"])
+-            except Exception: t = next(iter(tl))
+-        tr = t.fetch()
+-    except Exception:
+-        try:
+-            tr = YouTubeTranscriptApi.get_transcript(vid, languages=['tr', 'en'])
+-        except Exception:
+-            try:
+-                tr = YouTubeTranscriptApi.get_transcript(vid)
+-            except Exception as e:
+-                raise ValueError("Altyazı bulunamadı veya kapalı.") from e
+-    text = re.sub(r"\s+", " ", re.sub(r"\[.*?\]", "", " ".join(e["text"] for e in tr))).strip()
++        cmd = [sys.executable, "-m", "youtube_transcript_api", vid, "--format", "json"]
++        
++        # Windows'ta konsol penceresi açılmaması için
++        kwargs = {}
++        if sys.platform == "win32":
++            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
++            
++        res = subprocess.run(cmd, capture_output=True, text=True, check=True, **kwargs)
++        data = json.loads(res.stdout)
++        
++        if isinstance(data, list) and len(data) > 0 and isinstance(data[0], list):
++            items = data[0]
++        else:
++            items = data
++            
++        text = " ".join([i.get("text", "") for i in items])
++        text = re.sub(r"\s+", " ", re.sub(r"\[.*?\]", "", text)).strip()
++        
++    except Exception as e:
++        raise ValueError("Altyazı bulunamadı veya kapalı. Lütfen videoda otomatik çeviri veya altyazı olduğuna emin olun.") from e
++
+     try:
+         r = requests.get(f"https://www.youtube.com/watch?v={vid}",
+                          headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+@@ -657,7 +665,11 @@ async def serve_ui():
+ # ── File upload ──────────────────────────────────────────────────────────────
+ 
+ @app.post("/upload")
+-async def upload_file(file: UploadFile = File(...), x_api_key: Optional[str] = Header(None)):
++async def upload_file(
++    file: UploadFile = File(...),
++    folder_id: Optional[str] = Form(None),
++    x_api_key: Optional[str] = Header(None)
++):
+     api_key = get_api_key(x_api_key)
+     if not api_key: raise HTTPException(400, "GEMINI_API_KEY ayarlanmamış")
+ 
+@@ -684,6 +696,17 @@ async def upload_file(file: UploadFile = File(...), x_api_key: Optional[str] = H
+ 
+     chunks = chunk_text(text)
+     await index_chunks(chunks, filename, {"type": "file", "size_mb": round(size_mb, 2)}, api_key)
++
++    # Klasöre ekleme mantığı
++    if folder_id and folder_id != "f_default":
++        folders = load_folders()
++        for f in folders:
++            if f["id"] == folder_id:
++                if filename not in f.get("docs", []):
++                    f.setdefault("docs", []).append(filename)
++                    save_folders(folders)
++                break
++
+     return {"message": f"✅ '{filename}' yüklendi ({len(chunks)} parça · {size_mb:.1f} MB)"}
+ 
+ # ── Single URL ───────────────────────────────────────────────────────────────
+
+commit 839fa32f57000c07bc69a643db0445aa8bb39508
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Tue Mar 3 00:05:53 2026 +0300
+
+    Sidebar Resize, TOC, Popup Highlighter, History Fixed
+
+diff --git a/main.py b/main.py
+index 712ea2e..e5115d2 100644
+--- a/main.py
++++ b/main.py
+@@ -1083,6 +1083,40 @@ async def summarize_document(
+     except Exception as e:
+         raise HTTPException(500, f"Özet çıkarılırken hata oluştu: {str(e)}")
+ 
++@app.post("/toc-document")
++async def toc_document(
++    doc_name: str = Form(...),
++    x_api_key: Optional[str] = Header(None)
++):
++    """Belgenin içindekiler listesini (TOC) çıkarır."""
++    if not x_api_key and not GEMINI_API_KEY:
++        raise HTTPException(401, "API Key eksik")
++    api_key = x_api_key or GEMINI_API_KEY
++    
++    if collection.count() == 0:
++        raise HTTPException(404, "Koleksiyon boş")
++        
++    results = collection.get(
++        where={"source": doc_name},
++        include=["documents"]
++    )
++    docs = results.get("documents", [])
++    if not docs:
++        raise HTTPException(404, "Belge bulunamadı")
++        
++    full_text = "\n\n".join(docs)
++    max_chars = 100000 
++    truncated_text = full_text[:max_chars]
++    
++    prompt = f"Lütfen aşağıdaki belgenin sadece 'Ana Başlıkları' ve 'Alt Başlıklarını' hiyerarşik bir liste (İçindekiler / Table of Contents) formatında çıkar:\n\n{truncated_text}"
++    
++    try:
++        toc_text = await gemini_chat(prompt, "Sen bir akademik asistansın. Sadece başlıkları kullanarak hiyerarşik bir İçindekiler listesi oluştur. Madde işareti kullan, ekstra yorum yapma.", api_key)
++        return {"toc": toc_text}
++    except Exception as e:
++        raise HTTPException(500, f"İçindekiler çıkarılırken hata oluştu: {str(e)}")
++
++
+ # ── Google Drive Sync ────────────────────────────────────────────────────────
+ 
+ @app.post("/sync-drive")
+
+commit c2d21bbcf859bbb5298e71dadc804779539e9f1c
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Mon Mar 2 23:38:51 2026 +0300
+
+    Split layout into Left/Main/Right sidebars, history pagination, history deletion, and summary markdown fix
+
+diff --git a/main.py b/main.py
+index 97b2efc..712ea2e 100644
+--- a/main.py
++++ b/main.py
+@@ -845,6 +845,26 @@ async def query(
+ async def get_history():
+     return load_history()
+ 
++@app.delete("/history/{item_id}")
++async def delete_history_item(item_id: str):
++    hist = load_history()
++    new_hist = [h for h in hist if h.get("id") != item_id]
++    if len(hist) == len(new_hist):
++        raise HTTPException(404, "Geçmiş kaydı bulunamadı")
++    save_history(new_hist)
++    return {"message": "Geçmiş kaydı silindi"}
++
++@app.post("/history/{item_id}/touch")
++async def touch_history_item(item_id: str):
++    hist = load_history()
++    for i, h in enumerate(hist):
++        if h.get("id") == item_id:
++            item = hist.pop(i)
++            hist.insert(0, item)
++            save_history(hist)
++            return {"message": "Geçmiş öne alındı"}
++    raise HTTPException(404, "Geçmiş kaydı bulunamadı")
++
+ # ── Documents & Folders ──────────────────────────────────────────────────────
+ 
+ FOLDERS_FILE = "folders.json"
+
+commit 90be850fbd9617736402f1f954b14db2c7c51432
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Mon Mar 2 23:27:46 2026 +0300
+
+    E-book modal, popup search, and AI document summary features
+
+diff --git a/main.py b/main.py
+index 03168cc..97b2efc 100644
+--- a/main.py
++++ b/main.py
+@@ -955,6 +955,13 @@ async def move_doc(doc_name: str = Form(...), target_folder_id: str = Form(...))
+ # ── Documents (Eski uç nokta - geriye dönük uyumluluk için korundu) ─────────
+ 
+ @app.get("/documents")
++async def list_documents():
++    if collection.count() == 0:
++        return {"documents": [], "total_chunks": 0}
++    items = collection.get(include=["metadatas"])
++    srcs: dict[str, dict] = {}
++    for m in items["metadatas"]:
++        s = m["source"]
+         if s not in srcs:
+             srcs[s] = {"name": s, "chunks": 0, "type": m.get("type","file")}
+         srcs[s]["chunks"] += 1
+@@ -1000,6 +1007,62 @@ async def clear_all():
+     
+     return {"message": "Tüm belgeler silindi"}
+ 
++# ── Document Viewer & Summarization ──────────────────────────────────────────
++
++@app.get("/document/{doc_name:path}")
++async def get_document_content(doc_name: str):
++    """Belirtilen kaynağın (belgenin) tüm içeriğini getirir."""
++    if collection.count() == 0:
++        raise HTTPException(404, "Koleksiyon boş")
++    
++    import urllib.parse
++    doc_name = urllib.parse.unquote(doc_name)
++    
++    results = collection.get(
++        where={"source": doc_name},
++        include=["documents", "metadatas"]
++    )
++    
++    docs = results.get("documents", [])
++    if not docs:
++        raise HTTPException(404, "Belge bulunamadı veya içeriği yok")
++        
++    full_text = "\n\n".join(docs)
++    return {"name": doc_name, "content": full_text}
++
++@app.post("/summarize-document")
++async def summarize_document(
++    doc_name: str = Form(...),
++    x_api_key: Optional[str] = Header(None)
++):
++    if not x_api_key and not GEMINI_API_KEY:
++        raise HTTPException(401, "API Key eksik")
++    api_key = x_api_key or GEMINI_API_KEY
++    
++    if collection.count() == 0:
++        raise HTTPException(404, "Koleksiyon boş")
++        
++    results = collection.get(
++        where={"source": doc_name},
++        include=["documents"]
++    )
++    docs = results.get("documents", [])
++    if not docs:
++        raise HTTPException(404, "Belge bulunamadı")
++        
++    full_text = "\n\n".join(docs)
++    # Gemini limitlerine takılmaması için metni sınırla (isteğe bağlı)
++    max_chars = 100000 
++    truncated_text = full_text[:max_chars]
++    
++    prompt = f"Lütfen aşağıdaki belgenin ana hatlarıyla kapsamlı bir özetini çıkar. Belge ne hakkında ve hangi detayları içeriyor kısaca belirt:\n\n{truncated_text}"
++    
++    try:
++        summary_text = await gemini_chat(prompt, "Sen bir akademik özetleme asistanısın. Belgeyi nesnel, açık ve anlaşılır bir şekilde özetle. Kısa maddeler kullanabilirsin.", api_key)
++        return {"summary": summary_text}
++    except Exception as e:
++        raise HTTPException(500, f"Özet çıkarılırken hata oluştu: {str(e)}")
++
+ # ── Google Drive Sync ────────────────────────────────────────────────────────
+ 
+ @app.post("/sync-drive")
+
+commit 65f9aca4f4614bcae2e1b981202c4e001820011a
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Mon Mar 2 23:15:53 2026 +0300
+
+    Add Folders layout and sticky chat bar
+
+diff --git a/main.py b/main.py
+index bb28f7e..03168cc 100644
+--- a/main.py
++++ b/main.py
+@@ -845,12 +845,31 @@ async def query(
+ async def get_history():
+     return load_history()
+ 
+-# ── Documents ────────────────────────────────────────────────────────────────
++# ── Documents & Folders ──────────────────────────────────────────────────────
+ 
+-@app.get("/documents")
+-async def list_documents():
++FOLDERS_FILE = "folders.json"
++
++def load_folders() -> list[dict]:
++    if os.path.exists(FOLDERS_FILE):
++        try:
++            with open(FOLDERS_FILE, "r", encoding="utf-8") as f:
++                return json.load(f)
++        except Exception:
++            pass
++    # Varsayılan yapı
++    return [{"id": "f_default", "name": "Diğer Belgeler", "docs": []}]
++
++def save_folders(data: list[dict]):
++    with open(FOLDERS_FILE, "w", encoding="utf-8") as f:
++        json.dump(data, f, ensure_ascii=False, indent=2)
++
++@app.get("/folders")
++async def get_folders():
++    folders = load_folders()
++    # Mevcut belgeleri topla
+     if collection.count() == 0:
+-        return {"documents": [], "total_chunks": 0}
++        return {"folders": folders, "total_chunks": 0}
++    
+     items = collection.get(include=["metadatas"])
+     srcs: dict[str, dict] = {}
+     for m in items["metadatas"]:
+@@ -858,6 +877,87 @@ async def list_documents():
+         if s not in srcs:
+             srcs[s] = {"name": s, "chunks": 0, "type": m.get("type","file")}
+         srcs[s]["chunks"] += 1
++    
++    all_docs = list(srcs.values())
++    
++    # Hangi belge hangi klasörde bulalım
++    assigned_docs = set()
++    for f in folders:
++        # Sadece yüklenmiş belgeleri klasörde göster
++        f["doc_details"] = [doc for doc in all_docs if doc["name"] in f.get("docs", [])]
++        assigned_docs.update(f.get("docs", []))
++    
++    # Hiçbir klasöre atanmamış belgeleri "Diğer Belgeler" (f_default) içine ekle
++    unassigned = [doc for doc in all_docs if doc["name"] not in assigned_docs]
++    for f in folders:
++        if f["id"] == "f_default":
++            f["doc_details"].extend(unassigned)
++            break
++
++    return {"folders": folders, "total_chunks": collection.count()}
++
++@app.post("/create-folder")
++async def create_folder(name: str = Form(...)):
++    name = name.strip()
++    if not name: raise HTTPException(400, "Klasör ismi boş olamaz")
++    folders = load_folders()
++    folders.append({
++        "id": f"f_{str(uuid.uuid4())[:8]}",
++        "name": name,
++        "docs": []
++    })
++    save_folders(folders)
++    return {"message": f"📁 '{name}' oluşturuldu"}
++
++@app.post("/rename-folder")
++async def rename_folder(folder_id: str = Form(...), new_name: str = Form(...)):
++    if folder_id == "f_default": raise HTTPException(400, "Varsayılan klasör adı değiştirilemez")
++    new_name = new_name.strip()
++    if not new_name: raise HTTPException(400, "Yeni isim boş olamaz")
++    folders = load_folders()
++    for f in folders:
++        if f["id"] == folder_id:
++            f["name"] = new_name
++            save_folders(folders)
++            return {"message": "✅ Klasör adı güncellendi"}
++    raise HTTPException(404, "Klasör bulunamadı")
++
++@app.delete("/folder/{folder_id}")
++async def delete_folder(folder_id: str):
++    if folder_id == "f_default": raise HTTPException(400, "Varsayılan klasör silinemez")
++    folders = load_folders()
++    new_folders = [f for f in folders if f["id"] != folder_id]
++    if len(folders) == len(new_folders):
++        raise HTTPException(404, "Klasör bulunamadı")
++    save_folders(new_folders)
++    return {"message": "🗑️ Klasör silindi. İçindeki belgeler 'Diğer Belgeler'e aktarıldı."}
++
++@app.post("/move-doc")
++async def move_doc(doc_name: str = Form(...), target_folder_id: str = Form(...)):
++    folders = load_folders()
++    # Önce belgeyi bulunduğu tüm klasörlerden çıkar
++    for f in folders:
++        if doc_name in f.get("docs", []):
++            f["docs"].remove(doc_name)
++    
++    # Şimdi hedefe ekle (f_default ise hiçbir yere eklemeyiz, dinamik olarak oraya düşer)
++    if target_folder_id != "f_default":
++        for f in folders:
++            if f["id"] == target_folder_id:
++                if "docs" not in f: f["docs"] = []
++                if doc_name not in f["docs"]:
++                    f["docs"].append(doc_name)
++                break
++    
++    save_folders(folders)
++    return {"message": f"✅ Belge taşındı"}
++
++# ── Documents (Eski uç nokta - geriye dönük uyumluluk için korundu) ─────────
++
++@app.get("/documents")
++        if s not in srcs:
++            srcs[s] = {"name": s, "chunks": 0, "type": m.get("type","file")}
++        srcs[s]["chunks"] += 1
+     return {"documents": list(srcs.values()), "total_chunks": collection.count()}
+ 
+ @app.post("/rename-document")
+@@ -876,6 +976,14 @@ async def rename_document(
+             ids_to_update.append(items["ids"][idx])
+             m["source"] = new_name
+             metas_to_update.append(m)
++    # Belgeler isimlendirilirken folders.json içindeki referansı da güncelleyelim
++    folders = load_folders()
++    for f in folders:
++        if old_name in f.get("docs", []):
++            f["docs"].remove(old_name)
++            f["docs"].append(new_name)
++    save_folders(folders)
++
+     if not ids_to_update:
+         raise HTTPException(404, f"'{old_name}' bulunamadı")
+     collection.update(ids=ids_to_update, metadatas=metas_to_update)
+@@ -887,6 +995,9 @@ async def clear_all():
+     global collection
+     collection = chroma_client.get_or_create_collection(
+         name="documents", metadata={"hnsw:space": "cosine"})
++    # Klasörleri de sıfırla
++    save_folders([{"id": "f_default", "name": "Diğer Belgeler", "docs": []}])
++    
+     return {"message": "Tüm belgeler silindi"}
+ 
+ # ── Google Drive Sync ────────────────────────────────────────────────────────
+
+commit 49f345a8a76f2be0479b65002f79cfcf48ddc078
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Mon Mar 2 23:07:44 2026 +0300
+
+    YouTube fix, History UI, Citation markers
+
+diff --git a/main.py b/main.py
+index 3c13c05..bb28f7e 100644
+--- a/main.py
++++ b/main.py
+@@ -87,13 +87,15 @@ Yanıtlarını YALNIZCA sağlanan kaynaklara dayandır. Kaynaklarda bilgi yoksa
+ Türkçe sorulara Türkçe, İngilizce sorulara İngilizce yanıt ver.
+ 
+ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
+-1. Asla yıldız karakteri kullanma. Ne tek yıldız ne çift yıldız. Hiçbir kelimeyi yıldızlarla çevreleme.
+-2. Asla markdown formatı kullanma. Başlık için # işareti koyma.
+-3. Asla numaralı veya madde işaretli liste yapma.
+-4. Asla tire (-) veya nokta (•) ile başlayan satırlar oluşturma.
+-5. Her şeyi düz paragraflar halinde yaz. Bilgileri akıcı cümlelerle birbirine bağla.
+-6. Bir doktorla sohbet eder gibi doğal ve samimi bir üslup kullan.
+-7. Kalın, italik veya herhangi bir metin vurgulaması yapma."""
++1. Yanıtlarında hangi bilgiyi hangi kaynaktan aldıysan cümlenin sonuna o kaynağın numarasını köşeli parantez içinde yaz. Örnek: "...olduğu bilinmektedir [1]." veya "...gösterilmiştir [2]."
++2. SADECE metin içinde atıf numarası kullan ([1], [2] vb.). En alta kaynaklar listesi EKLEME. 
++3. Asla yıldız karakteri kullanma. Ne tek yıldız ne çift yıldız. Hiçbir kelimeyi yıldızlarla çevreleme.
++4. Asla markdown formatı kullanma. Başlık için # işareti koyma.
++5. Asla numaralı veya madde işaretli liste yapma.
++6. Asla tire (-) veya nokta (•) ile başlayan satırlar oluşturma.
++7. Her şeyi düz paragraflar halinde yaz. Bilgileri akıcı cümlelerle birbirine bağla.
++8. Bir doktorla sohbet eder gibi doğal ve samimi bir üslup kullan.
++9. Kalın, italik veya herhangi bir metin vurgulaması yapma."""
+ 
+ def strip_markdown(text: str) -> str:
+     """AI yanıtından kalan markdown işaretlerini temizler."""
+@@ -410,8 +412,14 @@ def fetch_yt(vid: str) -> tuple[str, str]:
+             try: t = tl.find_generated_transcript(["tr", "en"])
+             except Exception: t = next(iter(tl))
+         tr = t.fetch()
+-    except (TranscriptsDisabled, NoTranscriptFound):
+-        tr = YouTubeTranscriptApi.get_transcript(vid)
++    except Exception:
++        try:
++            tr = YouTubeTranscriptApi.get_transcript(vid, languages=['tr', 'en'])
++        except Exception:
++            try:
++                tr = YouTubeTranscriptApi.get_transcript(vid)
++            except Exception as e:
++                raise ValueError("Altyazı bulunamadı veya kapalı.") from e
+     text = re.sub(r"\s+", " ", re.sub(r"\[.*?\]", "", " ".join(e["text"] for e in tr))).strip()
+     try:
+         r = requests.get(f"https://www.youtube.com/watch?v={vid}",
+@@ -745,6 +753,21 @@ async def crawl_stop(job_id: str):
+     crawl_jobs[job_id]["force_stop"] = True
+     return {"message": "Tarama durduruluyor..."}
+ 
++HISTORY_FILE = "history.json"
++
++def load_history() -> list:
++    if os.path.exists(HISTORY_FILE):
++        try:
++            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
++                return json.load(f)
++        except Exception:
++            return []
++    return []
++
++def save_history(history: list):
++    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
++        json.dump(history, f, ensure_ascii=False, indent=2)
++
+ # ── Query ────────────────────────────────────────────────────────────────────
+ 
+ @app.post("/query")
+@@ -784,13 +807,14 @@ async def query(
+     chunk_details = []
+     for i, c in enumerate(chunks):
+         chunk_details.append({
++            "id": i + 1,
+             "text": c,
+             "source": metas[i]["source"],
+             "score": round(dists[i], 3) if i < len(dists) else None,
+         })
+ 
+     context = "\n\n---\n\n".join(
+-        f"[Kaynak: {metas[i]['source']}]\n{c}" for i, c in enumerate(chunks))
++        f"[Kaynak {i+1}]: {c}" for i, c in enumerate(chunks))
+     answer  = await gemini_chat(
+         f"Aşağıdaki kaynaklardan yararlanarak soruyu yanıtla:\n\n{context}\n\nSoru: {question}",
+         system_prompt, api_key)
+@@ -798,6 +822,18 @@ async def query(
+     # Markdown temizle
+     answer = strip_markdown(answer)
+ 
++    # Geçmişe kaydet
++    history_item = {
++        "id": str(uuid.uuid4())[:8],
++        "question": question,
++        "answer": answer,
++        "timestamp": datetime.now().isoformat(),
++        "chunk_details": chunk_details
++    }
++    hist = load_history()
++    hist.insert(0, history_item) # En başa ekle
++    save_history(hist[:50]) # Son 50 soruyu tut
++
+     return {
+         "answer": answer,
+         "sources": sources,
+@@ -805,6 +841,10 @@ async def query(
+         "chunk_details": chunk_details,
+     }
+ 
++@app.get("/history")
++async def get_history():
++    return load_history()
++
+ # ── Documents ────────────────────────────────────────────────────────────────
+ 
+ @app.get("/documents")
+
+commit a69b1653c8c22689ffc315d347138cfe15af5176
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Mon Mar 2 22:48:37 2026 +0300
+
+    Kaynak secimi, isim degistirme, kaynak popup, markdown temizleme
+
+diff --git a/main.py b/main.py
+index ec947e2..3c13c05 100644
+--- a/main.py
++++ b/main.py
+@@ -86,11 +86,26 @@ DEFAULT_SYSTEM_PROMPT = """Sen deneyimli bir sağlık danışmanısın. Sana ver
+ Yanıtlarını YALNIZCA sağlanan kaynaklara dayandır. Kaynaklarda bilgi yoksa bunu belirt.
+ Türkçe sorulara Türkçe, İngilizce sorulara İngilizce yanıt ver.
+ 
+-ÖNEMLİ FORMAT KURALLARI:
+-- Yanıtlarında kesinlikle yıldız (*), çift yıldız (**), markdown başlık (#), madde işareti veya liste formatı KULLANMA.
+-- Düz metin olarak, doğal ve akıcı cümlelerle yaz. Sanki bir uzman biriyle yüz yüze sohbet ediyormuş gibi samimi ve anlaşılır bir dil kullan.
+-- Yapay zeka tarafından yazıldığı anlaşılmamalı. İnsan gibi, doğal bir üslupla yanıt ver.
+-- Paragraflar halinde yaz, kısa ve öz tut."""
++KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
++1. Asla yıldız karakteri kullanma. Ne tek yıldız ne çift yıldız. Hiçbir kelimeyi yıldızlarla çevreleme.
++2. Asla markdown formatı kullanma. Başlık için # işareti koyma.
++3. Asla numaralı veya madde işaretli liste yapma.
++4. Asla tire (-) veya nokta (•) ile başlayan satırlar oluşturma.
++5. Her şeyi düz paragraflar halinde yaz. Bilgileri akıcı cümlelerle birbirine bağla.
++6. Bir doktorla sohbet eder gibi doğal ve samimi bir üslup kullan.
++7. Kalın, italik veya herhangi bir metin vurgulaması yapma."""
++
++def strip_markdown(text: str) -> str:
++    """AI yanıtından kalan markdown işaretlerini temizler."""
++    # **bold** ve *italic* kaldır
++    text = re.sub(r'\*{1,3}([^*]+)\*{1,3}', r'\1', text)
++    # ### başlıklar kaldır
++    text = re.sub(r'^#{1,6}\s*', '', text, flags=re.MULTILINE)
++    # - veya * ile başlayan liste öğelerini düz metne çevir
++    text = re.sub(r'^[\-\*•]\s+', '', text, flags=re.MULTILINE)
++    # Numaralı liste (1. 2. vb) → düz metin
++    text = re.sub(r'^\d+\.\s+', '', text, flags=re.MULTILINE)
++    return text.strip()
+ 
+ def get_api_key(x: Optional[str] = None) -> str:
+     return x or GEMINI_API_KEY_ENV or ""
+@@ -734,29 +749,61 @@ async def crawl_stop(job_id: str):
+ 
+ @app.post("/query")
+ async def query(
+-    question:      str = Form(...),
+-    system_prompt: str = Form(DEFAULT_SYSTEM_PROMPT),
+-    top_k:         int = Form(5),
++    question:         str = Form(...),
++    system_prompt:    str = Form(DEFAULT_SYSTEM_PROMPT),
++    top_k:            int = Form(5),
++    selected_sources: str = Form(""),   # virgülle ayrılmış kaynak isimleri (boş=hepsi)
+     x_api_key: Optional[str] = Header(None)
+ ):
+     api_key = get_api_key(x_api_key)
+     if not api_key: raise HTTPException(400, "GEMINI_API_KEY ayarlanmamış")
+     if collection.count() == 0: raise HTTPException(400, "Henüz belge yüklenmedi")
+ 
++    # Kaynak filtresi
++    where_filter = None
++    if selected_sources.strip():
++        src_list = [s.strip() for s in selected_sources.split("||||") if s.strip()]
++        if src_list:
++            where_filter = {"source": {"$in": src_list}}
++
+     q_emb   = await get_embedding(question, api_key)
+-    results = collection.query(query_embeddings=[q_emb],
+-                               n_results=min(top_k, collection.count()))
++    query_args = dict(
++        query_embeddings=[q_emb],
++        n_results=min(top_k, collection.count()),
++    )
++    if where_filter:
++        query_args["where"] = where_filter
++
++    results = collection.query(**query_args)
+     chunks  = results["documents"][0]
+     metas   = results["metadatas"][0]
++    dists   = results["distances"][0] if "distances" in results else []
+     sources = list({m["source"] for m in metas})
+ 
++    # Chunk detayları (popup için)
++    chunk_details = []
++    for i, c in enumerate(chunks):
++        chunk_details.append({
++            "text": c,
++            "source": metas[i]["source"],
++            "score": round(dists[i], 3) if i < len(dists) else None,
++        })
++
+     context = "\n\n---\n\n".join(
+         f"[Kaynak: {metas[i]['source']}]\n{c}" for i, c in enumerate(chunks))
+     answer  = await gemini_chat(
+         f"Aşağıdaki kaynaklardan yararlanarak soruyu yanıtla:\n\n{context}\n\nSoru: {question}",
+         system_prompt, api_key)
+ 
+-    return {"answer": answer, "sources": sources, "chunks_used": len(chunks)}
++    # Markdown temizle
++    answer = strip_markdown(answer)
++
++    return {
++        "answer": answer,
++        "sources": sources,
++        "chunks_used": len(chunks),
++        "chunk_details": chunk_details,
++    }
+ 
+ # ── Documents ────────────────────────────────────────────────────────────────
+ 
+@@ -773,6 +820,27 @@ async def list_documents():
+         srcs[s]["chunks"] += 1
+     return {"documents": list(srcs.values()), "total_chunks": collection.count()}
+ 
++@app.post("/rename-document")
++async def rename_document(
++    old_name: str = Form(...),
++    new_name: str = Form(...),
++):
++    """Belge kaynağının adını değiştirir."""
++    if collection.count() == 0:
++        raise HTTPException(400, "Belge bulunamadı")
++    items = collection.get(include=["metadatas"])
++    ids_to_update = []
++    metas_to_update = []
++    for idx, m in enumerate(items["metadatas"]):
++        if m.get("source") == old_name:
++            ids_to_update.append(items["ids"][idx])
++            m["source"] = new_name
++            metas_to_update.append(m)
++    if not ids_to_update:
++        raise HTTPException(404, f"'{old_name}' bulunamadı")
++    collection.update(ids=ids_to_update, metadatas=metas_to_update)
++    return {"message": f"✅ '{old_name}' → '{new_name}' olarak güncellendi ({len(ids_to_update)} parça)"}
++
+ @app.delete("/documents")
+ async def clear_all():
+     chroma_client.delete_collection("documents")
+
+commit 7d906a9415e8888f8c73d4d82ee58967c1640917
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Mon Mar 2 22:36:51 2026 +0300
+
+    Dogal yanit formati - markdown ve AI gorunumu kaldirildi
+
+diff --git a/main.py b/main.py
+index 1dc2eaa..ec947e2 100644
+--- a/main.py
++++ b/main.py
+@@ -82,9 +82,15 @@ drive_sync_status: dict = {
+     "files": [],            # [{name, chunks, drive_id}]
+ }
+ 
+-DEFAULT_SYSTEM_PROMPT = """Sen yardımcı bir asistansın. Sana verilen kaynak belgelerden yararlanarak soruları yanıtla.
++DEFAULT_SYSTEM_PROMPT = """Sen deneyimli bir sağlık danışmanısın. Sana verilen kaynak belgelerden yararlanarak soruları yanıtla.
+ Yanıtlarını YALNIZCA sağlanan kaynaklara dayandır. Kaynaklarda bilgi yoksa bunu belirt.
+-Türkçe sorulara Türkçe, İngilizce sorulara İngilizce yanıt ver."""
++Türkçe sorulara Türkçe, İngilizce sorulara İngilizce yanıt ver.
++
++ÖNEMLİ FORMAT KURALLARI:
++- Yanıtlarında kesinlikle yıldız (*), çift yıldız (**), markdown başlık (#), madde işareti veya liste formatı KULLANMA.
++- Düz metin olarak, doğal ve akıcı cümlelerle yaz. Sanki bir uzman biriyle yüz yüze sohbet ediyormuş gibi samimi ve anlaşılır bir dil kullan.
++- Yapay zeka tarafından yazıldığı anlaşılmamalı. İnsan gibi, doğal bir üslupla yanıt ver.
++- Paragraflar halinde yaz, kısa ve öz tut."""
+ 
+ def get_api_key(x: Optional[str] = None) -> str:
+     return x or GEMINI_API_KEY_ENV or ""
+
+commit 19bd8891e645f1d03cfbadde7ece5b5bb6208d16
+Author: mustafasacar35 <mustafasacar@hotmail.com>
+Date:   Sun Mar 1 23:26:18 2026 +0300
+
+    Google Drive RAG integration - auto-sync, patient mode, Render ready
+
+diff --git a/main.py b/main.py
+new file mode 100644
+index 0000000..1dc2eaa
+--- /dev/null
++++ b/main.py
+@@ -0,0 +1,808 @@
++import os
++import uuid
++import httpx
++import re
++import io
++import json
++import asyncio
++import time
++import logging
++from pathlib import Path
++from typing import Optional
++from urllib.parse import urljoin, urlparse
++from collections import deque
++from datetime import datetime
++
++from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header, BackgroundTasks
++from fastapi.staticfiles import StaticFiles
++from fastapi.responses import HTMLResponse
++from fastapi.middleware.cors import CORSMiddleware
++import chromadb
++from google import genai
++from google.genai import types
++
++import PyPDF2
++import docx
++import ebooklib
++from ebooklib import epub
++import requests
++from bs4 import BeautifulSoup
++from youtube_transcript_api import YouTubeTranscriptApi
++from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound
++
++# Google Drive API
++from google.oauth2 import service_account
++from googleapiclient.discovery import build
++from googleapiclient.http import MediaIoBaseDownload
++
++# ─── App & DB ────────────────────────────────────────────────────────────────
++
++app = FastAPI(title="RAG API")
++app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
++
++CHROMA_PATH = "./chroma_db"
++chroma_client = chromadb.PersistentClient(path=CHROMA_PATH)
++collection = chroma_client.get_or_create_collection(
++    name="documents", metadata={"hnsw:space": "cosine"})
++
++# Job store: crawl_jobs[job_id] = {...}
++crawl_jobs: dict[str, dict] = {}
++
++# ─── Config ──────────────────────────────────────────────────────────────────
++
++GEMINI_API_KEY_ENV  = os.environ.get("GEMINI_API_KEY", "")
++
++MAX_FILE_SIZE_MB    = 15
++MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
++CRAWL_DELAY_SEC     = 0.4          #礼儀 — sunucuyu zorlamayalım
++PAGES_PER_LAYER     = 50           # Katman başına max sayfa
++AUTO_SCORE_THRESHOLD = 0.45        # Bu skorun üstündeyse "yeterli" sayar (cosine distance, düşük = iyi)
++
++# ─── Google Drive Config ─────────────────────────────────────────────────────
++GOOGLE_DRIVE_FOLDER_ID      = os.environ.get("GOOGLE_DRIVE_FOLDER_ID", "1XkqOenGiKibLX54zKNWefxtGiWIioWTX")
++
++# Credentials: env var (JSON string) veya dosya yolu
++_sa_env = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
++if _sa_env and os.path.isfile(_sa_env):
++    GOOGLE_SERVICE_ACCOUNT_JSON = Path(_sa_env).read_text(encoding="utf-8")
++elif _sa_env:
++    GOOGLE_SERVICE_ACCOUNT_JSON = _sa_env
++elif os.path.isfile("service_account.json"):
++    GOOGLE_SERVICE_ACCOUNT_JSON = Path("service_account.json").read_text(encoding="utf-8")
++else:
++    GOOGLE_SERVICE_ACCOUNT_JSON = ""
++
++# Drive sync state
++drive_sync_status: dict = {
++    "status": "idle",       # idle | running | done | error
++    "last_sync": None,
++    "files_synced": 0,
++    "total_chunks": 0,
++    "message": "",
++    "files": [],            # [{name, chunks, drive_id}]
++}
++
++DEFAULT_SYSTEM_PROMPT = """Sen yardımcı bir asistansın. Sana verilen kaynak belgelerden yararlanarak soruları yanıtla.
++Yanıtlarını YALNIZCA sağlanan kaynaklara dayandır. Kaynaklarda bilgi yoksa bunu belirt.
++Türkçe sorulara Türkçe, İngilizce sorulara İngilizce yanıt ver."""
++
++def get_api_key(x: Optional[str] = None) -> str:
++    return x or GEMINI_API_KEY_ENV or ""
++
++# ─── Text & Embed Helpers ────────────────────────────────────────────────────
++
++def chunk_text(text: str, size: int = 800, overlap: int = 150) -> list[str]:
++    words = text.split()
++    chunks, i = [], 0
++    while i < len(words):
++        chunks.append(" ".join(words[i:i + size]))
++        i += size - overlap
++    return [c for c in chunks if len(c.strip()) > 50]
++
++async def get_embedding(text: str, api_key: str) -> list[float]:
++    client = genai.Client(api_key=api_key)
++    try:
++        response = await asyncio.to_thread(
++            client.models.embed_content,
++            model='gemini-embedding-001',
++            contents=text[:8000]
++        )
++        return response.embeddings[0].values
++    except Exception as e:
++        import traceback
++        with open("error_log.txt", "a", encoding="utf-8") as f:
++            f.write(f"\n{'='*60}\n{traceback.format_exc()}\n")
++        raise
++
++async def gemini_chat(prompt: str, system_prompt: str, api_key: str) -> str:
++    client = genai.Client(api_key=api_key)
++    response = await asyncio.to_thread(
++        client.models.generate_content,
++        model='gemini-2.5-flash',
++        contents=prompt,
++        config=types.GenerateContentConfig(
++            system_instruction=system_prompt,
++            temperature=0.1,
++            max_output_tokens=8192
++        )
++    )
++    return response.text
++
++async def index_chunks(chunks: list[str], source: str, meta: dict, api_key: str) -> int:
++    doc_id = str(uuid.uuid4())[:8]
++    embs, ids, metas, docs = [], [], [], []
++    for i, c in enumerate(chunks):
++        embs.append(await get_embedding(c, api_key))
++        ids.append(f"{doc_id}_{i}")
++        metas.append({"source": source, "chunk": i, **{k: str(v) for k, v in meta.items()}})
++        docs.append(c)
++    if embs:
++        collection.add(embeddings=embs, ids=ids, metadatas=metas, documents=docs)
++    return len(embs)
++
++# ─── Auto-score: "bu konuda yeterli içerik var mı?" ──────────────────────────
++
++async def content_score(query_hint: str, api_key: str) -> float:
++    """
++    Index'e bir skor sorgusu atar.
++    En iyi eşleşmenin cosine distance'ını döner (0=mükemmel, 1=alakasız).
++    Skor < threshold → "yeterli içerik bulundu".
++    query_hint yoksa 1.0 döner (her zaman devam et).
++    """
++    if not query_hint or collection.count() == 0:
++        return 1.0
++    emb = await get_embedding(query_hint, api_key)
++    res = collection.query(query_embeddings=[emb], n_results=1)
++    distances = res.get("distances", [[1.0]])[0]
++    return distances[0] if distances else 1.0
++
++# ─── File Extractors ─────────────────────────────────────────────────────────
++
++def extract_pdf(data: bytes) -> str:
++    return "\n".join(p.extract_text() or "" for p in PyPDF2.PdfReader(io.BytesIO(data)).pages)
++
++def extract_docx_b(data: bytes) -> str:
++    return "\n".join(p.text for p in docx.Document(io.BytesIO(data)).paragraphs)
++
++def extract_epub_b(data: bytes) -> str:
++    book = epub.read_epub(io.BytesIO(data))
++    parts = []
++    for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
++        soup = BeautifulSoup(item.get_content(), "html.parser")
++        for t in soup(["script", "style"]): t.decompose()
++        parts.append(soup.get_text(" "))
++    return " ".join(parts)
++
++# ─── Google Drive Helpers ─────────────────────────────────────────────────────
++
++DRIVE_SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
++DRIVE_MIME_MAP = {
++    'application/pdf': 'pdf',
++    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
++    'application/epub+zip': 'epub',
++    'text/plain': 'txt',
++    'text/markdown': 'md',
++    # Google Docs → export as plain text
++    'application/vnd.google-apps.document': 'gdoc',
++}
++
++def get_drive_service():
++    """Service Account ile Google Drive API client oluşturur."""
++    if not GOOGLE_SERVICE_ACCOUNT_JSON:
++        raise RuntimeError("GOOGLE_SERVICE_ACCOUNT_JSON ayarlanmamış")
++    info = json.loads(GOOGLE_SERVICE_ACCOUNT_JSON)
++    creds = service_account.Credentials.from_service_account_info(info, scopes=DRIVE_SCOPES)
++    return build('drive', 'v3', credentials=creds)
++
++def list_drive_files(service, folder_id: str) -> list[dict]:
++    """Drive klasöründeki desteklenen dosyaları listeler."""
++    query = f"'{folder_id}' in parents and trashed = false"
++    results = []
++    page_token = None
++    while True:
++        resp = service.files().list(
++            q=query,
++            fields="nextPageToken, files(id, name, mimeType, modifiedTime, size)",
++            pageSize=100,
++            pageToken=page_token
++        ).execute()
++        for f in resp.get('files', []):
++            mime = f.get('mimeType', '')
++            if mime in DRIVE_MIME_MAP or mime.startswith('text/'):
++                results.append(f)
++        page_token = resp.get('nextPageToken')
++        if not page_token:
++            break
++    return results
++
++def download_drive_file(service, file_info: dict) -> bytes:
++    """Drive dosyasını indirir. Google Docs ise text/plain olarak export eder."""
++    mime = file_info.get('mimeType', '')
++    if mime == 'application/vnd.google-apps.document':
++        # Google Docs → export
++        req = service.files().export_media(fileId=file_info['id'], mimeType='text/plain')
++    else:
++        req = service.files().get_media(fileId=file_info['id'])
++    buf = io.BytesIO()
++    downloader = MediaIoBaseDownload(buf, req)
++    done = False
++    while not done:
++        _, done = downloader.next_chunk()
++    return buf.getvalue()
++
++def extract_text_from_drive_file(data: bytes, mime: str) -> str:
++    """Dosya verisinden metin çıkarır."""
++    ext = DRIVE_MIME_MAP.get(mime, '')
++    if ext == 'pdf':
++        return extract_pdf(data)
++    elif ext == 'docx':
++        return extract_docx_b(data)
++    elif ext == 'epub':
++        return extract_epub_b(data)
++    elif ext in ('txt', 'md', 'gdoc') or mime.startswith('text/'):
++        return data.decode('utf-8', errors='ignore')
++    return ""
++
++def get_indexed_drive_ids() -> set[str]:
++    """ChromaDB'deki Drive kaynaklı dosya ID'lerini döner."""
++    if collection.count() == 0:
++        return set()
++    items = collection.get(include=["metadatas"])
++    ids = set()
++    for m in items["metadatas"]:
++        if m.get("type") == "drive" and m.get("drive_id"):
++            ids.add(m["drive_id"])
++    return ids
++
++def remove_drive_file_from_index(drive_id: str):
++    """Belirli bir Drive dosyasının tüm chunk'larını ChromaDB'den siler."""
++    if collection.count() == 0:
++        return
++    items = collection.get(include=["metadatas"])
++    ids_to_delete = []
++    for idx, m in enumerate(items["metadatas"]):
++        if m.get("drive_id") == drive_id:
++            ids_to_delete.append(items["ids"][idx])
++    if ids_to_delete:
++        collection.delete(ids=ids_to_delete)
++
++async def sync_drive_folder(api_key: str):
++    """Drive klasörünü senkronize eder → yeni/değişen dosyaları indexler, silinenleri kaldırır."""
++    global drive_sync_status
++    drive_sync_status.update({
++        "status": "running",
++        "message": "Drive klasörü taranıyor...",
++        "files_synced": 0,
++        "total_chunks": 0,
++        "files": [],
++    })
++
++    try:
++        service = await asyncio.to_thread(get_drive_service)
++        drive_files = await asyncio.to_thread(list_drive_files, service, GOOGLE_DRIVE_FOLDER_ID)
++
++        # Mevcut index'teki drive dosya ID'leri
++        indexed_ids = await asyncio.to_thread(get_indexed_drive_ids)
++        drive_file_ids = {f['id'] for f in drive_files}
++
++        # Silinen dosyaları kaldır
++        removed_ids = indexed_ids - drive_file_ids
++        for rid in removed_ids:
++            await asyncio.to_thread(remove_drive_file_from_index, rid)
++
++        # Mevcut index'teki dosya modifiedTime'larını kontrol et
++        indexed_times = {}
++        if collection.count() > 0:
++            items = collection.get(include=["metadatas"])
++            for m in items["metadatas"]:
++                if m.get("type") == "drive" and m.get("drive_id"):
++                    indexed_times[m["drive_id"]] = m.get("modified_time", "")
++
++        synced = 0
++        total_chunks = 0
++        file_list = []
++
++        for f in drive_files:
++            fid = f['id']
++            fname = f['name']
++            mime = f.get('mimeType', '')
++            mod_time = f.get('modifiedTime', '')
++
++            # Zaten indexlenmiş ve değişmemiş → atla
++            if fid in indexed_times and indexed_times[fid] == mod_time:
++                # Mevcut chunk sayısını hesapla
++                existing_chunks = sum(
++                    1 for m in items["metadatas"] if m.get("drive_id") == fid
++                )
++                file_list.append({"name": fname, "chunks": existing_chunks, "drive_id": fid})
++                total_chunks += existing_chunks
++                continue
++
++            # Değişmiş dosya → eski chunk'ları sil
++            if fid in indexed_ids:
++                await asyncio.to_thread(remove_drive_file_from_index, fid)
++
++            drive_sync_status["message"] = f"İndiriliyor: {fname}..."
++
++            try:
++                data = await asyncio.to_thread(download_drive_file, service, f)
++                text = extract_text_from_drive_file(data, mime)
++                if not text.strip():
++                    continue
++
++                chunks = chunk_text(text)
++                n = await index_chunks(
++                    chunks, f"📁 {fname}",
++                    {"type": "drive", "drive_id": fid, "modified_time": mod_time},
++                    api_key
++                )
++                synced += 1
++                total_chunks += n
++                file_list.append({"name": fname, "chunks": n, "drive_id": fid})
++                drive_sync_status.update({
++                    "files_synced": synced,
++                    "total_chunks": total_chunks,
++                    "message": f"Indexlendi: {fname} ({n} parça)",
++                })
++            except Exception as e:
++                logging.warning(f"Drive dosyası işlenemedi: {fname} — {e}")
++                continue
++
++        drive_sync_status.update({
++            "status": "done",
++            "last_sync": datetime.now().isoformat(),
++            "files_synced": synced,
++            "total_chunks": total_chunks,
++            "files": file_list,
++            "message": f"✅ {synced} yeni dosya indexlendi, toplam {len(file_list)} dosya · {total_chunks} parça",
++        })
++    except Exception as e:
++        drive_sync_status.update({
++            "status": "error",
++            "message": f"❌ Sync hatası: {e}",
++        })
++        logging.error(f"Drive sync error: {e}")
++
++
++def clean_html(html: str) -> str:
++    soup = BeautifulSoup(html, "html.parser")
++    for t in soup(["script", "style", "nav", "footer", "header", "aside", "form"]):
++        t.decompose()
++    return " ".join(soup.get_text(" ").split())
++
++# ─── YouTube ─────────────────────────────────────────────────────────────────
++
++def yt_video_id(url: str) -> Optional[str]:
++    for p in [r"(?:youtube\.com/watch\?.*v=)([a-zA-Z0-9_-]{11})",
++              r"(?:youtu\.be/)([a-zA-Z0-9_-]{11})",
++              r"(?:youtube\.com/embed/)([a-zA-Z0-9_-]{11})",
++              r"(?:youtube\.com/shorts/)([a-zA-Z0-9_-]{11})"]:
++        m = re.search(p, url)
++        if m: return m.group(1)
++    return None
++
++def fetch_yt(vid: str) -> tuple[str, str]:
++    try:
++        tl = YouTubeTranscriptApi.list_transcripts(vid)
++        try: t = tl.find_manually_created_transcript(["tr", "en"])
++        except Exception:
++            try: t = tl.find_generated_transcript(["tr", "en"])
++            except Exception: t = next(iter(tl))
++        tr = t.fetch()
++    except (TranscriptsDisabled, NoTranscriptFound):
++        tr = YouTubeTranscriptApi.get_transcript(vid)
++    text = re.sub(r"\s+", " ", re.sub(r"\[.*?\]", "", " ".join(e["text"] for e in tr))).strip()
++    try:
++        r = requests.get(f"https://www.youtube.com/watch?v={vid}",
++                         headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
++        m = re.search(r'"title":"([^"]+)"', r.text)
++        title = m.group(1) if m else f"YouTube:{vid}"
++    except Exception:
++        title = f"YouTube:{vid}"
++    return text, title
++
++# ─── Layered BFS Crawler ─────────────────────────────────────────────────────
++
++SKIP_EXT = re.compile(
++    r"\.(jpg|jpeg|png|gif|webp|pdf|zip|mp4|mp3|css|js|svg|ico|woff|woff2|ttf|exe|dmg)$", re.I)
++
++def get_sitemap_urls(base: str) -> list[str]:
++    parsed = urlparse(base)
++    root   = f"{parsed.scheme}://{parsed.netloc}"
++    urls   = []
++    for path in ["/sitemap.xml", "/sitemap_index.xml", "/sitemap/"]:
++        try:
++            r = requests.get(root + path, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
++            if r.status_code == 200 and "xml" in r.headers.get("content-type", ""):
++                soup = BeautifulSoup(r.text, "xml")
++                for stag in soup.find_all("sitemap"):
++                    loc = stag.find("loc")
++                    if loc:
++                        try:
++                            r2 = requests.get(loc.text.strip(), timeout=10,
++                                              headers={"User-Agent": "Mozilla/5.0"})
++                            s2 = BeautifulSoup(r2.text, "xml")
++                            urls += [t.text.strip() for t in s2.find_all("loc")]
++                        except Exception: pass
++                urls += [t.text.strip() for t in soup.find_all("loc")
++                         if not t.find_parent("sitemap")]
++                if urls: break
++        except Exception: continue
++    domain = parsed.netloc
++    return [u for u in urls if urlparse(u).netloc == domain]
++
++
++def crawl_one_layer(
++    frontier: list[str],       # Bu katmanın taranacak URL listesi
++    visited:  set[str],
++    domain:   str,
++    session:  requests.Session,
++    max_pages: int = PAGES_PER_LAYER,
++) -> tuple[list[tuple[str,str]], list[str]]:
++    """
++    frontier listesinden max_pages kadar sayfa tara.
++    Returns:
++      pages      = [(url, text), ...]   — bu katmanda bulunan içerikler
++      next_layer = [url, ...]           — sonraki katman için keşfedilen linkler
++    """
++    pages:      list[tuple[str,str]] = []
++    next_layer: list[str]            = []
++    seen_next:  set[str]             = set()
++
++    for url in frontier:
++        if len(pages) >= max_pages:
++            break
++        url = url.split("#")[0].rstrip("/")
++        if url in visited or SKIP_EXT.search(url):
++            continue
++        visited.add(url)
++
++        try:
++            r  = session.get(url, timeout=12)
++            ct = r.headers.get("content-type", "")
++            if "html" not in ct:
++                continue
++            text = clean_html(r.text)
++            if len(text.strip()) < 100:
++                continue
++            pages.append((url, text))
++
++            # Sonraki katman için linkleri topla
++            soup = BeautifulSoup(r.text, "html.parser")
++            for a in soup.find_all("a", href=True):
++                href = a["href"].strip()
++                full = urljoin(url, href).split("#")[0].rstrip("/")
++                if (urlparse(full).netloc == domain
++                        and full not in visited
++                        and full not in seen_next
++                        and not SKIP_EXT.search(full)):
++                    next_layer.append(full)
++                    seen_next.add(full)
++
++            time.sleep(CRAWL_DELAY_SEC)
++        except Exception:
++            continue
++
++    return pages, next_layer
++
++
++async def layered_crawl_and_index(
++    start_url:  str,
++    job_id:     str,
++    api_key:    str,
++    query_hint: str = "",
++):
++    """
++    Katman katman tara + her katman sonrası otomatik skor kontrolü.
++    crawl_jobs[job_id] canlı güncellenir.
++    Kullanıcı 'deeper' isteği de buraya yansır (job["force_next"]).
++    """
++    domain  = urlparse(start_url).netloc
++    session = requests.Session()
++    session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; RAGBot/1.0)"})
++
++    visited:      set[str]  = set()
++    total_pages:  int       = 0
++    total_chunks: int       = 0
++    layer_num:    int       = 0
++
++    # Başlangıç frontier: sitemap varsa oradan, yoksa ana sayfa
++    sitemap_urls = get_sitemap_urls(start_url)
++    if sitemap_urls:
++        frontier    = sitemap_urls
++        using_sitemap = True
++    else:
++        frontier    = [start_url]
++        using_sitemap = False
++
++    crawl_jobs[job_id].update({
++        "status": "running", "layer": 0,
++        "total_pages": 0, "total_chunks": 0,
++        "score": None, "auto_stopped": False,
++        "force_next": False, "paused": False,
++        "using_sitemap": using_sitemap,
++        "domain": domain,
++    })
++
++    while frontier:
++        layer_num += 1
++        crawl_jobs[job_id].update({
++            "layer": layer_num,
++            "layer_status": f"Katman {layer_num} taranıyor ({min(len(frontier), PAGES_PER_LAYER)} sayfa)...",
++            "paused": False,
++        })
++
++        # ── Tarama (sync → thread) ──────────────────────────────────────────
++        pages, next_frontier = await asyncio.to_thread(
++            crawl_one_layer, frontier[:PAGES_PER_LAYER * 3],
++            visited, domain, session, PAGES_PER_LAYER)
++
++        # ── Index ───────────────────────────────────────────────────────────
++        crawl_jobs[job_id]["layer_status"] = f"Katman {layer_num} indexleniyor ({len(pages)} sayfa)..."
++        for url, text in pages:
++            chunks = chunk_text(text)
++            n = await index_chunks(chunks, f"🌐 {domain}", {"type": "web", "url": url, "layer": layer_num}, api_key)
++            total_chunks += n
++        total_pages += len(pages)
++
++        crawl_jobs[job_id].update({
++            "total_pages":  total_pages,
++            "total_chunks": total_chunks,
++        })
++
++        # ── Skor kontrolü ───────────────────────────────────────────────────
++        score = await content_score(query_hint, api_key) if query_hint else None
++        crawl_jobs[job_id]["score"] = round(score, 3) if score is not None else None
++
++        # Sonraki katmana link kalmadıysa bitti
++        if not next_frontier:
++            crawl_jobs[job_id].update({
++                "status": "done",
++                "message": f"✅ Site tamamen tarandı — {total_pages} sayfa · {total_chunks} parça · {layer_num} katman",
++                "auto_stopped": False,
++            })
++            return
++
++        # Sitemap modunda tüm URL'ler tek frontier'da, katman kavramı yok → tek turda bit
++        if using_sitemap:
++            frontier = []  # sitemap zaten hepsini verdi
++        else:
++            frontier = next_frontier
++
++        # ── Otomatik dur kararı ─────────────────────────────────────────────
++        if query_hint and score is not None and score < AUTO_SCORE_THRESHOLD:
++            crawl_jobs[job_id].update({
++                "status": "paused",
++                "paused": True,
++                "auto_stopped": True,
++                "layer_status": f"✅ Katman {layer_num} yeterli — skor {score:.2f}",
++                "message": (f"Katman {layer_num} tamamlandı. "
++                            f"Yeterli içerik bulundu (skor: {score:.2f}). "
++                            f"Daha derine inmek ister misin?"),
++            })
++            # Kullanıcının 'deeper' veya 'stop' demesini bekle
++            while True:
++                await asyncio.sleep(1)
++                job = crawl_jobs.get(job_id, {})
++                if job.get("force_next"):
++                    crawl_jobs[job_id]["force_next"] = False
++                    break  # devam et
++                if job.get("force_stop"):
++                    crawl_jobs[job_id].update({"status": "done",
++                        "message": f"✅ Durduruldu — {total_pages} sayfa · {total_chunks} parça"})
++                    return
++        else:
++            # Otomatik dur değil → kısa "katman bitti" mesajı ver ve devam et
++            score_txt = f" · skor {score:.2f}" if score is not None else ""
++            crawl_jobs[job_id]["layer_status"] = (
++                f"Katman {layer_num} bitti ({total_pages} sayfa{score_txt}), devam ediliyor...")
++            await asyncio.sleep(0.2)  # UI'nın görmesi için mini bekleme
++
++    crawl_jobs[job_id].update({
++        "status": "done",
++        "message": f"✅ {total_pages} sayfa · {total_chunks} parça · {layer_num} katman",
++    })
++
++
++# ─── Startup: Auto-sync Drive ────────────────────────────────────────────────
++
++@app.on_event("startup")
++async def startup_sync():
++    """Uygulama başlatılınca Drive klasörünü otomatik sync et."""
++    if GOOGLE_DRIVE_FOLDER_ID and GOOGLE_SERVICE_ACCOUNT_JSON:
++        api_key = GEMINI_API_KEY_ENV
++        if api_key:
++            logging.info("🔄 Startup: Google Drive sync başlatılıyor...")
++            asyncio.create_task(sync_drive_folder(api_key))
++        else:
++            logging.warning("Drive sync atlanıyor: GEMINI_API_KEY ayarlanmamış")
++    else:
++        logging.info("Drive sync atlanıyor: GOOGLE_DRIVE_FOLDER_ID veya credentials yok")
++
++# ─── Routes ──────────────────────────────────────────────────────────────────
++
++@app.get("/", response_class=HTMLResponse)
++async def serve_ui():
++    return Path("static/index.html").read_text(encoding="utf-8")
++
++# ── File upload ──────────────────────────────────────────────────────────────
++
++@app.post("/upload")
++async def upload_file(file: UploadFile = File(...), x_api_key: Optional[str] = Header(None)):
++    api_key = get_api_key(x_api_key)
++    if not api_key: raise HTTPException(400, "GEMINI_API_KEY ayarlanmamış")
++
++    content  = await file.read()
++    filename = file.filename or "unknown"
++    size_mb  = len(content) / (1024 * 1024)
++
++    if len(content) > MAX_FILE_SIZE_BYTES:
++        raise HTTPException(413,
++            f"⚠️ Dosya çok büyük: {size_mb:.1f} MB (limit: {MAX_FILE_SIZE_MB} MB).")
++
++    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
++    try:
++        if   ext == "pdf":                  text = extract_pdf(content)
++        elif ext == "docx":                 text = extract_docx_b(content)
++        elif ext == "epub":                 text = extract_epub_b(content)
++        elif ext in ("txt","md","markdown"):text = content.decode("utf-8", errors="ignore")
++        else: raise HTTPException(400, f"Desteklenmeyen format: .{ext}")
++    except HTTPException: raise
++    except Exception as e: raise HTTPException(400, f"Dosya okunamadı: {e}")
++
++    if not text.strip():
++        raise HTTPException(400, "Dosyadan metin çıkarılamadı.")
++
++    chunks = chunk_text(text)
++    await index_chunks(chunks, filename, {"type": "file", "size_mb": round(size_mb, 2)}, api_key)
++    return {"message": f"✅ '{filename}' yüklendi ({len(chunks)} parça · {size_mb:.1f} MB)"}
++
++# ── Single URL ───────────────────────────────────────────────────────────────
++
++@app.post("/add-url")
++async def add_url(url: str = Form(...), x_api_key: Optional[str] = Header(None)):
++    api_key = get_api_key(x_api_key)
++    if not api_key: raise HTTPException(400, "GEMINI_API_KEY ayarlanmamış")
++
++    vid = yt_video_id(url)
++    if vid:
++        try:
++            text, title = await asyncio.to_thread(fetch_yt, vid)
++            source, extra = f"▶ {title}", {"type": "youtube", "url": url}
++        except Exception as e:
++            raise HTTPException(400, f"YouTube transkripti alınamadı: {e}")
++    else:
++        try:
++            r      = await asyncio.to_thread(lambda: requests.get(url, timeout=15,
++                        headers={"User-Agent": "Mozilla/5.0"}))
++            text   = clean_html(r.text)
++            source, extra = url, {"type": "web", "url": url}
++        except Exception as e:
++            raise HTTPException(400, f"URL okunamadı: {e}")
++
++    if not text.strip(): raise HTTPException(400, "İçerik boş")
++    chunks = chunk_text(text)
++    await index_chunks(chunks, source, extra, api_key)
++    return {"message": f"✅ {'▶' if vid else '🌐'} Eklendi ({len(chunks)} parça)"}
++
++# ── Layered site crawl ───────────────────────────────────────────────────────
++
++@app.post("/crawl-site")
++async def start_crawl(
++    url:         str  = Form(...),
++    query_hint:  str  = Form(""),          # Opsiyonel: ne arıyorum?
++    background_tasks: BackgroundTasks = BackgroundTasks(),
++    x_api_key: Optional[str] = Header(None)
++):
++    api_key = get_api_key(x_api_key)
++    if not api_key: raise HTTPException(400, "GEMINI_API_KEY ayarlanmamış")
++    p = urlparse(url)
++    if not p.scheme or not p.netloc: raise HTTPException(400, "Geçersiz URL")
++
++    job_id = str(uuid.uuid4())[:8]
++    crawl_jobs[job_id] = {"status": "queued", "url": url, "query_hint": query_hint}
++    background_tasks.add_task(layered_crawl_and_index, url, job_id, api_key, query_hint)
++    return {"job_id": job_id, "message": "🕷️ Katmanlı tarama başladı"}
++
++@app.get("/crawl-status/{job_id}")
++async def crawl_status(job_id: str):
++    if job_id not in crawl_jobs: raise HTTPException(404, "Job bulunamadı")
++    return crawl_jobs[job_id]
++
++@app.post("/crawl-deeper/{job_id}")
++async def crawl_deeper(job_id: str):
++    """Kullanıcı 'daha derine in' dedi."""
++    if job_id not in crawl_jobs: raise HTTPException(404, "Job bulunamadı")
++    crawl_jobs[job_id]["force_next"] = True
++    crawl_jobs[job_id]["paused"]     = False
++    return {"message": "Bir sonraki katmana geçiliyor..."}
++
++@app.post("/crawl-stop/{job_id}")
++async def crawl_stop(job_id: str):
++    """Kullanıcı 'yeter' dedi."""
++    if job_id not in crawl_jobs: raise HTTPException(404, "Job bulunamadı")
++    crawl_jobs[job_id]["force_stop"] = True
++    return {"message": "Tarama durduruluyor..."}
++
++# ── Query ────────────────────────────────────────────────────────────────────
++
++@app.post("/query")
++async def query(
++    question:      str = Form(...),
++    system_prompt: str = Form(DEFAULT_SYSTEM_PROMPT),
++    top_k:         int = Form(5),
++    x_api_key: Optional[str] = Header(None)
++):
++    api_key = get_api_key(x_api_key)
++    if not api_key: raise HTTPException(400, "GEMINI_API_KEY ayarlanmamış")
++    if collection.count() == 0: raise HTTPException(400, "Henüz belge yüklenmedi")
++
++    q_emb   = await get_embedding(question, api_key)
++    results = collection.query(query_embeddings=[q_emb],
++                               n_results=min(top_k, collection.count()))
++    chunks  = results["documents"][0]
++    metas   = results["metadatas"][0]
++    sources = list({m["source"] for m in metas})
++
++    context = "\n\n---\n\n".join(
++        f"[Kaynak: {metas[i]['source']}]\n{c}" for i, c in enumerate(chunks))
++    answer  = await gemini_chat(
++        f"Aşağıdaki kaynaklardan yararlanarak soruyu yanıtla:\n\n{context}\n\nSoru: {question}",
++        system_prompt, api_key)
++
++    return {"answer": answer, "sources": sources, "chunks_used": len(chunks)}
++
++# ── Documents ────────────────────────────────────────────────────────────────
++
++@app.get("/documents")
++async def list_documents():
++    if collection.count() == 0:
++        return {"documents": [], "total_chunks": 0}
++    items = collection.get(include=["metadatas"])
++    srcs: dict[str, dict] = {}
++    for m in items["metadatas"]:
++        s = m["source"]
++        if s not in srcs:
++            srcs[s] = {"name": s, "chunks": 0, "type": m.get("type","file")}
++        srcs[s]["chunks"] += 1
++    return {"documents": list(srcs.values()), "total_chunks": collection.count()}
++
++@app.delete("/documents")
++async def clear_all():
++    chroma_client.delete_collection("documents")
++    global collection
++    collection = chroma_client.get_or_create_collection(
++        name="documents", metadata={"hnsw:space": "cosine"})
++    return {"message": "Tüm belgeler silindi"}
++
++# ── Google Drive Sync ────────────────────────────────────────────────────────
++
++@app.post("/sync-drive")
++async def sync_drive(
++    background_tasks: BackgroundTasks,
++    x_api_key: Optional[str] = Header(None)
++):
++    """Manuel Drive sync tetikler."""
++    if not GOOGLE_DRIVE_FOLDER_ID:
++        raise HTTPException(400, "GOOGLE_DRIVE_FOLDER_ID ayarlanmamış")
++    if not GOOGLE_SERVICE_ACCOUNT_JSON:
++        raise HTTPException(400, "GOOGLE_SERVICE_ACCOUNT_JSON ayarlanmamış")
++    if drive_sync_status["status"] == "running":
++        raise HTTPException(409, "Sync zaten çalışıyor")
++
++    api_key = get_api_key(x_api_key)
++    if not api_key:
++        raise HTTPException(400, "GEMINI_API_KEY ayarlanmamış")
++
++    background_tasks.add_task(sync_drive_folder, api_key)
++    return {"message": "🔄 Drive sync başlatıldı"}
++
++@app.get("/drive-status")
++async def get_drive_status():
++    """Drive sync durumunu döner."""
++    return {
++        **drive_sync_status,
++        "drive_configured": bool(GOOGLE_DRIVE_FOLDER_ID and GOOGLE_SERVICE_ACCOUNT_JSON),
++    }
++
++app.mount("/static", StaticFiles(directory="static"), name="static")
