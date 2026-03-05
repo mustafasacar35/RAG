@@ -917,6 +917,119 @@
       border-radius: 2px
     }
 
+    /* ── CHAT HISTORY ── */
+    .history-list {
+      overflow-y: auto;
+      padding: 4px 0;
+    }
+
+    .hist-item {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 6px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background .15s;
+      margin-bottom: 2px;
+    }
+
+    .hist-item:hover {
+      background: var(--surface2);
+    }
+
+    .hist-text {
+      flex: 1;
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+
+    .hist-del {
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 10px;
+      opacity: 0;
+      transition: opacity .15s;
+      padding: 2px;
+      flex-shrink: 0;
+    }
+
+    .hist-item:hover .hist-del {
+      opacity: 0.6;
+    }
+
+    .hist-del:hover {
+      opacity: 1 !important;
+    }
+
+    .hist-pagination {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 6px 0;
+      font-family: var(--mono);
+      font-size: 9px;
+      color: var(--muted);
+    }
+
+    .hist-page-btn {
+      font-family: var(--mono);
+      font-size: 9px;
+      padding: 3px 8px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      transition: all .15s;
+    }
+
+    .hist-page-btn:hover:not(:disabled) {
+      background: var(--surface2);
+      border-color: var(--accent);
+    }
+
+    .hist-page-btn:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
+    }
+
+    .new-chat-btn {
+      width: 100%;
+      padding: 8px 12px;
+      margin-bottom: 8px;
+      background: linear-gradient(135deg, var(--accent) 0%, var(--blue) 100%);
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      cursor: pointer;
+      transition: all .2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .new-chat-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(28, 126, 214, 0.35);
+    }
+
+    .new-chat-btn:active {
+      transform: translateY(0);
+    }
+
     /* ── DRIVE SYNC ── */
     .drive-status {
       background: var(--bg);
@@ -1663,6 +1776,7 @@
     <!-- GEÇMİŞ -->
     <div class="sec" style="flex:1; display:flex; flex-direction:column;">
       <div class="sec-label">Geçmiş Sorular</div>
+      <button class="new-chat-btn" onclick="startNewChat()" id="newChatBtn">✨ Yeni Sohbet</button>
       <div class="history-list" id="histList" style="flex:1; max-height:none;">
         <div class="empty-docs">Geçmiş yok</div>
       </div>
@@ -2522,6 +2636,22 @@ KESİN FORMAT KURALLARI (bunlara kesinlikle uy, ihlal etme):
           });
         }
       }, 50);
+    }
+
+    // ── New Chat ──────────────────────────────────────────────────────────────
+    function startNewChat() {
+      const chat = document.getElementById('chatArea');
+      // Eğer sohbet alanında mesaj varsa temizle
+      chat.innerHTML = `
+        <div class="welcome" id="welcome">
+          <div class="welcome-icon">🧠</div>
+          <h2>RAG Engine v4</h2>
+          <p>Dosya · YouTube · URL · Katmanlı Site Tarama<br>Her katmanda 50 sayfa · Otomatik + Manuel kontrol<br>Gemini API · Ücretsiz</p>
+        </div>`;
+      // Chunk detaylarını sıfırla
+      lastChunkDetails = [];
+      lastAiAnswer = '';
+      toast('Yeni sohbet başlatıldı ✨', 's');
     }
 
     // ── Chat ───────────────────────────────────────────────────────────────────
