@@ -124,8 +124,6 @@ def chunk_text(text: str, size: int = 800, overlap: int = 150) -> list[str]:
 
 async def get_embedding(text: str, api_key: str) -> list[float]:
     clean_key = api_key.strip()
-    with open("__debug_key.txt", "w") as f:
-        f.write(f"LEN: {len(clean_key)}, STR: {clean_key}\n")
     client = genai.Client(api_key=clean_key)
     
     try:
