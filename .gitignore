@@ -16,3 +16,6 @@ error_log.txt
 # IDE
 .vscode/
 *.code-workspace
+
+__debug_key.txt
+__sync_debug.log
